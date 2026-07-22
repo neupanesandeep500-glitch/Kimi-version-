@@ -479,15 +479,33 @@ app.layout = dbc.Container(fluid=True, children=[
 
     # FIX: GIS layer toggles are ALWAYS in DOM
     html.Div(id="gis-controls-container", style={"display": "none"}, children=[
-        dbc.Checklist(
-            id="gis-opt-layers",
-            options=[
-                {"label": " License Boundary Polygons", "value": "boundary"},
-                {"label": " Protected Areas Overlay", "value": "pa"},
-            ],
-            value=["boundary"],
-            inline=True, switch=True, className="mb-2",
-        ),
+        dbc.Row([
+            dbc.Col(md="auto", children=[
+                html.Label("Choropleth level", className="fw-semibold small me-2"),
+                dcc.Dropdown(
+                    id="gis-choropleth-level",
+                    options=[
+                        {"label": "Province", "value": "province"},
+                        {"label": "District", "value": "district"},
+                        {"label": "Local Body (Gaunpalika/Nagarpalika)", "value": "local"},
+                    ],
+                    value="district", clearable=False, searchable=False,
+                    style={"width": "260px", "display": "inline-block"},
+                ),
+            ], className="d-flex align-items-center"),
+            dbc.Col(md="auto", children=[
+                dbc.Checklist(
+                    id="gis-opt-layers",
+                    options=[
+                        {"label": " Country Outline", "value": "country"},
+                        {"label": " License Boundary Polygons", "value": "boundary"},
+                        {"label": " Protected Areas Overlay", "value": "pa"},
+                    ],
+                    value=["country", "boundary"],
+                    inline=True, switch=True,
+                ),
+            ], className="d-flex align-items-center"),
+        ], className="g-3 mb-2 align-items-center"),
     ]),
 
     html.Div(id="_init_trigger", style={"display": "none"}),
@@ -725,10 +743,11 @@ def update_ticker(_status, _poll, f_type, f_status, f_province, f_capacity, f_tx
     Input("f-district", "value"), Input("f-local", "value"),
     Input("table-page-size-dd", "value"),
     Input("chart-prefs", "data"),
+    Input("gis-choropleth-level", "value"),
 )
 def render_tab(tab, f_type, f_status, f_province, f_capacity, f_tx_length, f_year, f_search,
                f_date_from, f_date_to, f_cod_from, f_cod_to, f_crs, gis_layers,
-               f_district, f_local, table_page_size, prefs):
+               f_district, f_local, table_page_size, prefs, gis_level):
     loader = STATE["loader"]
     gis_controls_style = {"display": "block"} if tab == "gis" else {"display": "none"}
     prefs = prefs or DEFAULT_CHART_PREFS
@@ -789,10 +808,12 @@ def render_tab(tab, f_type, f_status, f_province, f_capacity, f_tx_length, f_yea
         if tab == "growth":
             return render_growth(loader, active_recs, prefs=prefs), gis_controls_style
         if tab == "gis":
-            gis_layers = gis_layers if gis_layers is not None else ["boundary"]
+            gis_layers = gis_layers if gis_layers is not None else ["country", "boundary"]
             return render_gis_tab(loader, active_recs, f_crs or ct.CRS_WGS84,
                                    show_boundary="boundary" in gis_layers,
-                                   show_pa="pa" in gis_layers), gis_controls_style
+                                   show_pa="pa" in gis_layers,
+                                   show_country="country" in gis_layers,
+                                   level=gis_level or "district"), gis_controls_style
         if tab == "compare":
             return render_compare(loader, active_recs, prefs=prefs), gis_controls_style
         if tab == "table":
@@ -1706,7 +1727,8 @@ def render_growth(loader, recs, prefs=None):
     ])
 
 
-def render_gis(loader, recs, f_crs=None, show_boundary=True, show_pa=False):
+def render_gis(loader, recs, f_crs=None, show_boundary=True, show_pa=False,
+                show_country=True, level="district"):
     plant_recs = [r for r in recs if r["lat"] and r["lon"]]
     boundary_recs = [r for r in recs if r.get("bbox")] if show_boundary else []
 
@@ -1715,31 +1737,49 @@ def render_gis(loader, recs, f_crs=None, show_boundary=True, show_pa=False):
 
     if not gis_loaded and not plant_recs and not boundary_recs:
         return dbc.Alert(
-            "No map data available yet — neither the district/province "
-            "boundary package nor any licensed-project coordinates have "
-            "been loaded. An administrator can add these at /admin (sync "
-            "the workbook and the GIS package, or set DEFAULT_SHEET_URL / "
-            "DEFAULT_GIS_DRIVE_URL on the server).",
+            "No map data available yet — neither the province/district/"
+            "local-body boundary package nor any licensed-project "
+            "coordinates have been loaded. An administrator can add these "
+            "at /admin (sync the workbook and the GIS package, or set "
+            "DEFAULT_SHEET_URL / DEFAULT_GIS_DRIVE_URL on the server).",
             color="info",
         )
 
     fig = go.Figure()
 
+    # Real national outline (from the Survey Department shapefile) as a
+    # thin base-map reference layer, underneath the choropleth.
+    if show_country and getattr(de.GIS, "boundary_polygons", None):
+        for poly in de.GIS.boundary_polygons:
+            for ring in poly:
+                lons = [pt[0] for pt in ring]
+                lats = [pt[1] for pt in ring]
+                fig.add_trace(go.Scattermapbox(
+                    lon=lons, lat=lats, mode="lines", fill="none",
+                    line=dict(width=2, color="#0d47a1"),
+                    hoverinfo="skip", showlegend=False, name="Nepal",
+                ))
+
+    # Choropleth polygons — province, district, or local body — shaded by
+    # capacity (MW) of the currently-filtered records at that granularity.
     if gis_loaded:
-        dist_metric = loader.district_metric(recs)
-        values = [v[1] for v in dist_metric.values()]
+        key_field = {"province": "province", "district": "district", "local": "local_body"}.get(level, "district")
+        metric = loader.metric_by_field(recs, key_field) if key_field != "district" else loader.district_metric(recs)
+        values = [v[1] for v in metric.values()]
         vmax = max(values) if values else 1
-        for name, prov, rings in de.GIS.display_rings(level="district"):
-            cnt, mw = dist_metric.get(name, [0, 0.0])
+        for name, prov, rings in de.GIS.display_rings(level=level):
+            cnt, mw = metric.get(name, [0, 0.0])
             intensity = min(mw / vmax, 1.0) if vmax else 0
             color = f"rgba(21,101,192,{0.15 + 0.65 * intensity:.2f})"
+            label = {"province": "Province", "district": "District", "local": "Local Body"}.get(level, "District")
             for ring in rings:
                 lons = [pt[0] for pt in ring]
                 lats = [pt[1] for pt in ring]
                 fig.add_trace(go.Scattermapbox(
                     lon=lons, lat=lats, mode="lines", fill="toself",
                     fillcolor=color, line=dict(width=1, color="#37474f"),
-                    hoverinfo="text", text=f"{name} ({prov})<br>{cnt} projects · {mw:.1f} MW",
+                    hoverinfo="text",
+                    text=f"{label}: {name} ({prov})<br>{cnt:,} projects · {mw:,.1f} MW",
                     showlegend=False,
                 ))
 
@@ -1774,34 +1814,49 @@ def render_gis(loader, recs, f_crs=None, show_boundary=True, show_pa=False):
             lat, lon = r["lat"], r["lon"]
             if f_crs == ct.CRS_EVEREST:
                 lat, lon = ct.wgs84_to_everest(lat, lon)
-            base = (f"{r['project']}<br>{r['type']} · {r['capacity_mw'] or 0:.1f} MW"
+            base = (f"{r['project']}<br>{r['type']} · {r['status']} · {r['capacity_mw'] or 0:.1f} MW"
                     f"<br>{lat:.5f}, {lon:.5f} ({ct.CRS_LABELS.get(f_crs or ct.CRS_WGS84)})")
             return base
 
         def _detail(r):
             return de.full_rec_tip(r).replace(chr(10), "<br>")
 
+        # Requirement: color every project marker by its current License
+        # Stage (Operation / Construction License / ... / Application for
+        # Survey License) rather than by project type, so the map shows
+        # "the Projects with each stage of active license" at a glance.
         fig.add_trace(go.Scattermapbox(
             lon=[r["lon"] for r in plant_recs], lat=[r["lat"] for r in plant_recs],
             mode="markers",
-            marker=dict(size=8, color=[TYPE_COLOR_MAP.get(r["type"], "#607d8b") for r in plant_recs]),
+            marker=dict(size=9, color=[STATUS_COLOR_MAP.get(r["status"], "#607d8b") for r in plant_recs]),
             text=[_hover(r) for r in plant_recs],
             customdata=[_detail(r) for r in plant_recs],
             hoverinfo="text", name="Projects",
         ))
 
+        # A visible legend for the license-stage marker colors (Scattermapbox
+        # doesn't auto-legend marker-array colors), in canonical stage order.
+        stages_present = [s for s in STAGE_DISPLAY_ORDER if any(r["status"] == s for r in plant_recs)]
+        for st in stages_present:
+            fig.add_trace(go.Scattermapbox(
+                lon=[None], lat=[None], mode="markers",
+                marker=dict(size=9, color=STATUS_COLOR_MAP.get(st, "#607d8b")),
+                name=st, showlegend=True, hoverinfo="skip",
+            ))
+
     fig.update_layout(
         mapbox=dict(style="carto-positron", center=dict(lat=28.3, lon=84.1), zoom=5.6),
         height=650, margin=dict(l=0, r=0, t=0, b=0),
+        legend=dict(bgcolor="rgba(255,255,255,0.85)", x=0.01, y=0.99),
     )
     graph = dcc.Graph(id="gis-map", figure=fig, config={"scrollZoom": True})
 
     if not gis_loaded:
         return html.Div([
             dbc.Alert(
-                "District/province boundary shading isn't loaded yet — "
-                "showing project locations only. An administrator can add "
-                "the GIS package at /admin.",
+                "Province/district/local-body boundary shading isn't loaded "
+                "yet — showing project locations only. An administrator can "
+                "add the GIS package at /admin.",
                 color="warning", className="mb-2", dismissable=True,
             ),
             graph,
@@ -1809,11 +1864,13 @@ def render_gis(loader, recs, f_crs=None, show_boundary=True, show_pa=False):
     return graph
 
 
-def render_gis_tab(loader, recs, f_crs, show_boundary=True, show_pa=False):
+def render_gis_tab(loader, recs, f_crs, show_boundary=True, show_pa=False,
+                     show_country=True, level="district"):
     map_view = dbc.Row([
         dbc.Col(md=8, children=[
             html.Div(id="gis-controls-wrapper"),
-            render_gis(loader, recs, f_crs, show_boundary=show_boundary, show_pa=show_pa),
+            render_gis(loader, recs, f_crs, show_boundary=show_boundary, show_pa=show_pa,
+                       show_country=show_country, level=level),
             html.Div("Scroll the mouse wheel over the map to zoom in/out.",
                       className="text-muted small mt-1"),
         ]),
