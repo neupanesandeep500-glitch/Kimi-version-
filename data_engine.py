@@ -53,6 +53,80 @@ PROVINCE_ORDER = [
     "Lumbini", "Karnali", "Sudurpaschim"
 ]
 
+# ── Sheet name -> (type, status) lookup ────────────────────────────────────
+#
+# The DoED workbook has no "Type" or "Status" column on any sheet — each
+# sheet IS a type/status combination (e.g. "Survey_Solar" = Solar projects
+# that hold a Survey License). "Hydro" here is a marker resolved per-row in
+# _parse_row() using the row's capacity (<=1MW vs >1MW), for the sheets that
+# don't already split hydro by size. Keys are matched against the *exact*
+# sheet name (including any stray leading/trailing spaces in the workbook)
+# because two sheets in this workbook are named identically except for a
+# trailing space yet hold different data (see the Technical Clearance note
+# below).
+SHEET_META = {
+    "Survey_Hydro_Less 1": ("Hydro (<=1MW)", "Survey License"),
+    "Survey_Hydro_More 1 ": ("Hydro (>1MW)", "Survey License"),
+    "Survey_Thermal": ("Thermal", "Survey License"),
+    "Survey_Solar": ("Solar", "Survey License"),
+    "Survey_Wind": ("Wind", "Survey License"),
+    "Survey_Biomass": ("Biomass", "Survey License"),
+    "Survey_Cogeneration": ("Co-generation", "Survey License"),
+    "Survey_Transmission Line": ("Transmission Line", "Survey License"),
+
+    "Construction Lice_Hydro_Less 1": ("Hydro (<=1MW)", "Construction License"),
+    "Construction Lice_Hydro_More 1": ("Hydro (>1MW)", "Construction License"),
+    "Construction Lice_Thermal": ("Thermal", "Construction License"),
+    "Construction_Lice_Solar": ("Solar", "Construction License"),
+    "Construction_Lice_Wind": ("Wind", "Construction License"),
+    "Construction_Lice_Biomass": ("Biomass", "Construction License"),
+    "Construction_Lice_Cogeneration": ("Co-generation", "Construction License"),
+    "Construction_Lice_Transmission": ("Transmission Line", "Construction License"),
+
+    "Appl_Survey_Hydro_Less 1": ("Hydro (<=1MW)", "Application for Survey License"),
+    "Appl_Survey_Hydro_More 1": ("Hydro (>1MW)", "Application for Survey License"),
+    "Appl_Survey_Thermal": ("Thermal", "Application for Survey License"),
+    "Appl_Survey_Solar ": ("Solar", "Application for Survey License"),
+    "Appl_Survey_Wind": ("Wind", "Application for Survey License"),
+    "Appl_Survey_Biomass": ("Biomass", "Application for Survey License"),
+    "Appl_Survey_Cogeneration": ("Co-generation", "Application for Survey License"),
+    "Appl_Survey_Transmission Line ": ("Transmission Line", "Application for Survey License"),
+    "Appl_Survey_Cancelled_Hydro": ("Hydro", "Cancelled"),
+
+    "Appl_Construction Lic_Hydro": ("Hydro", "Application for Construction License"),
+    "Appl_Construction Lic_Thermal": ("Thermal", "Application for Construction License"),
+    "Appl_Construction Lic_Solar": ("Solar", "Application for Construction License"),
+    "Appl_Construction Lic_Wind": ("Wind", "Application for Construction License"),
+    "Appl_Construction Lic_Biomass": ("Biomass", "Application for Construction License"),
+    "Appl_Construction_Cogeneration": ("Co-generation", "Application for Construction License"),
+    "Appl_Construction_Transmission ": ("Transmission Line", "Application for Construction License"),
+
+    "Power Plants_Hydro Less 1": ("Hydro (<=1MW)", "Operating"),
+    "Power Plants_Hydro More 1": ("Hydro (>1MW)", "Operating"),
+    "Power Plants_Thermal": ("Thermal", "Operating"),
+    "Power Plants_Solar": ("Solar", "Operating"),
+    "Power Plants_Wind ": ("Wind", "Operating"),
+    "Power Plants_Biomass": ("Biomass", "Operating"),
+    "Power Plants_Cogeneration": ("Co-generation", "Operating"),
+
+    "Generation Lic_Cancelled ": ("Hydro", "Cancelled"),
+    "Survey License_Cancelled": ("Hydro", "Cancelled"),
+    "Generation Application_Cancelle": ("Hydro", "Cancelled"),
+    "40 M Criteria License_Cancelled": ("Hydro", "Cancelled"),
+
+    "GoN_Studied Projects": ("Hydro", "GoN Study Project"),
+    "GoN_Under Study Projects": ("Hydro", "GoN Study Project"),
+
+    "Technical Clearance Hydro": ("Hydro", "Technical Clearance"),
+    "Technical Clearance Solar ": ("Solar", "Technical Clearance"),
+    # NOTE: this sheet name is a duplicate of the one above (source data
+    # entry mistake) — its IMPORTHTML formula actually pulls from doed.gov.np's
+    # "tcwind" page, so its rows are Wind, not Solar. Kept as a distinct dict
+    # key (no trailing space) precisely so it does not collide with the real
+    # Solar sheet above.
+    "Technical Clearance Solar": ("Wind", "Technical Clearance"),
+}
+
 STATUS_COLORS = {
     "Application for Survey License": "#90a4ae",
     "Survey License": "#42a5f5",
@@ -323,6 +397,61 @@ class GISEngine:
 GIS = GISEngine()
 
 
+# ── Column / coordinate parsing helpers ────────────────────────────────────
+
+def _normalize_col_name(c):
+    """Turn a raw workbook header into a stable lookup key.
+
+    The workbook's headers are messy in ways a plain
+    ``.lower().replace(" ", "_")`` doesn't handle:
+      * Some sheets wrap headers in asterisks: "*Project*".
+      * "Capacity (MW)" / "Voltage (kV)" / "Line Length (km)" carry
+        parentheses that survive a space-only replace.
+      * "VDC/District" has a slash.
+      * The Transmission Line sheets have Google-Sheets filter-chip text
+        appended after a newline, e.g. "Promoter\\nFilter: All ...", which
+        would otherwise turn into one giant, unmatchable column name.
+      * A stray sort-arrow character shows up on "Appn Date ▾".
+    This keeps only the text before the first newline, strips asterisks,
+    lowercases, and collapses every run of non-word characters to a single
+    underscore, so "*Capacity (MW)*" and "Voltage (kV)\\nFilter: ..." both
+    become clean, matchable keys ("capacity_mw", "voltage_kv").
+    """
+    s = str(c).split("\n", 1)[0]
+    s = s.replace("*", "")
+    s = s.strip().lower()
+    s = re.sub(r"[^\w]+", "_", s)
+    return s.strip("_")
+
+
+_DMS_RE = re.compile(r"(\d+(?:\.\d+)?)\s*[o°]\s*(\d+(?:\.\d+)?)?\s*'?\s*(\d+(?:\.\d+)?)?\s*\"?")
+
+
+def _dms_to_decimal(s):
+    """Parse a 'DDDo MM' SS"' string (as used throughout this workbook,
+    e.g. 28o 09' 18") into decimal degrees. Returns None for blank/missing
+    values and for the "00o 00' 00\"" placeholder the source uses for
+    "no data" (0,0 isn't a real coordinate anywhere in Nepal)."""
+    if s is None:
+        return None
+    s = str(s).strip()
+    if not s:
+        return None
+    m = _DMS_RE.match(s)
+    if not m:
+        try:
+            v = float(s)
+        except (ValueError, TypeError):
+            return None
+        return v if v != 0 else None
+    deg = float(m.group(1))
+    minutes = float(m.group(2)) if m.group(2) else 0.0
+    seconds = float(m.group(3)) if m.group(3) else 0.0
+    if deg == 0 and minutes == 0 and seconds == 0:
+        return None
+    return deg + minutes / 60.0 + seconds / 3600.0
+
+
 # ── DataLoader ──────────────────────────────────────────────────────────────
 
 class DataLoader:
@@ -359,7 +488,7 @@ class DataLoader:
                     continue
 
                 # Normalize column names
-                df.columns = [str(c).strip().lower().replace(" ", "_") for c in df.columns]
+                df.columns = [_normalize_col_name(c) for c in df.columns]
 
                 for _, row in df.iterrows():
                     rec = self._parse_row(row, sheet_name)
@@ -385,77 +514,127 @@ class DataLoader:
                         return v
             return None
 
+        # Value at `candidate` plus whatever sits in the very next column,
+        # but ONLY if that next column has a blank/"Unnamed" header — i.e. a
+        # true paired second value (this workbook stores each lat/lon as a
+        # start/end pair spanning two adjacent, mostly-unlabeled columns),
+        # not just the next labeled field.
+        def get_paired(*candidates):
+            cols = list(row.index)
+            for c in candidates:
+                if c in cols:
+                    idx = cols.index(c)
+                    primary = row.iloc[idx]
+                    secondary = None
+                    if idx + 1 < len(cols):
+                        nxt = cols[idx + 1]
+                        if nxt.startswith("unnamed") or nxt == "":
+                            secondary = row.iloc[idx + 1]
+                    return primary, secondary
+            return None, None
+
         project = get_col("project_name", "project", "name", "project_name_")
         if not project or str(project).strip() in ("", "nan", "None"):
             return None
 
-        # Determine type
+        # Capacity (needed before type classification, to resolve the
+        # sheets that mix <=1MW and >1MW hydro projects together)
+        cap = get_col("capacity_mw", "capacity", "mw", "installed_capacity")
+        try:
+            capacity_mw = float(cap) if cap is not None and pd.notna(cap) else None
+        except (ValueError, TypeError):
+            capacity_mw = None
+
+        # Determine type — sheet identity is authoritative for this workbook
+        # (no sheet has an actual "Type" column); fall back to any explicit
+        # type/status columns for other workbooks that do have them.
         type_val = str(get_col("type", "project_type", "category", "plant_type") or "").strip()
         ptype = self._classify_type(type_val, sheet_name)
+        if ptype == "Hydro":
+            # Generic marker from SHEET_META for sheets that don't split by
+            # size — resolve using this row's own capacity.
+            ptype = "Hydro (<=1MW)" if (capacity_mw is not None and capacity_mw <= 1) else "Hydro (>1MW)"
 
         # Determine status
         status_val = str(get_col("status", "license_status", "stage", "current_status") or "").strip()
-        status = self._classify_status(status_val)
-
-        # Capacity
-        cap = get_col("capacity_mw", "capacity", "mw", "installed_capacity")
-        try:
-            capacity_mw = float(cap) if cap is not None else None
-        except (ValueError, TypeError):
-            capacity_mw = None
+        status = self._classify_status(status_val, sheet_name)
 
         # Voltage and line length (for transmission)
         volt = get_col("voltage_kv", "voltage", "kv")
         try:
-            voltage_kv = float(volt) if volt is not None else None
+            voltage_kv = float(volt) if volt is not None and pd.notna(volt) else None
         except (ValueError, TypeError):
             voltage_kv = None
 
         line_len = get_col("line_length_km", "length_km", "circuit_length", "transmission_length")
         try:
-            line_length_km = float(line_len) if line_len is not None else None
+            line_length_km = float(line_len) if line_len is not None and pd.notna(line_len) else None
         except (ValueError, TypeError):
             line_length_km = None
 
         # Location
-        district = str(get_col("district", "dist", "district_name") or "").strip()
+        district = str(get_col("district", "vdc_district", "dist", "district_name") or "").strip()
         province = str(get_col("province", "prov", "province_name") or "").strip()
         local_body = str(get_col("local_body", "gaunpalika", "nagarpalika", "municipality") or "").strip()
 
-        # Coordinates
-        lat = get_col("latitude", "lat", "y")
-        lon = get_col("longitude", "lon", "long", "x")
-        try:
-            lat = float(lat) if lat is not None else None
-            lon = float(lon) if lon is not None else None
-        except (ValueError, TypeError):
-            lat = lon = None
+        # Coordinates — stored as DMS strings ("28o 09' 18\"") across a
+        # start/end column pair (a small license-area bounding box), under
+        # a misspelled "Latitiude N" / "Longitude E" header.
+        lat_start_raw, lat_end_raw = get_paired("latitiude_n", "latitude", "lat", "y")
+        lon_start_raw, lon_end_raw = get_paired("longitude_e", "longitude", "lon", "long", "x")
+        lat_start = _dms_to_decimal(lat_start_raw)
+        lat_end = _dms_to_decimal(lat_end_raw)
+        lon_start = _dms_to_decimal(lon_start_raw)
+        lon_end = _dms_to_decimal(lon_end_raw)
 
-        # If coordinates exist but no district, try GIS lookup
-        if lat and lon and (not district or district == "Unspecified"):
-            district, province = GIS.point_in_district(lon, lat)
+        if lat_start is not None and lat_end is not None:
+            lat = (lat_start + lat_end) / 2.0
+        else:
+            lat = lat_start if lat_start is not None else lat_end
+        if lon_start is not None and lon_end is not None:
+            lon = (lon_start + lon_end) / 2.0
+        else:
+            lon = lon_start if lon_start is not None else lon_end
 
-        # License date
-        lic_date = get_col("license_date", "issue_date", "license_issued", "date")
+        # Fill in whichever of district/province the source didn't give us
+        # via GIS boundary lookup. The workbook has no Province column at
+        # all, so this is the only way province gets populated; district
+        # from the source's own VDC/District text (when present) is kept
+        # as-is since it's more specific than the GIS bounding-box match.
+        if lat and lon and (not district or district == "Unspecified" or not province or province == "Unspecified"):
+            gis_district, gis_province = GIS.point_in_district(lon, lat)
+            if not district or district == "Unspecified":
+                district = gis_district
+            if not province or province == "Unspecified":
+                province = gis_province
+
+        # License date (source header is itself misspelled "Isuue Date")
+        lic_date = get_col("license_date", "isuue_date", "issue_date", "license_issued", "date")
         lic_year = self._extract_year(lic_date)
 
         # COD date
-        cod_date = get_col("cod", "commercial_operation_date", "operation_date", "commissioning_date")
+        cod_date = get_col("cod", "c_o_d", "commercial_operation_date", "operation_date", "commissioning_date")
         cod_bs = self._parse_date_to_bs(cod_date)
 
         # Promoter
         promoter = str(get_col("promoter", "developer", "company", "promoter_name") or "").strip()
 
-        # Bbox for license area (if available)
+        # Bbox for license area — build it from the DMS start/end corners
+        # when we have a genuine (non-degenerate) box; otherwise fall back
+        # to any explicit bbox/boundary/license_area column if present.
         bbox = None
-        for col in ["bbox", "boundary", "license_area"]:
-            if col in row.index and pd.notna(row[col]):
-                try:
-                    bbox = json.loads(str(row[col]))
-                    if isinstance(bbox, list) and len(bbox) == 4:
-                        break
-                except:
-                    pass
+        if None not in (lat_start, lat_end, lon_start, lon_end) and (lat_start != lat_end or lon_start != lon_end):
+            bbox = [lat_start, lat_end, lon_start, lon_end]
+        else:
+            for col in ["bbox", "boundary", "license_area"]:
+                if col in row.index and pd.notna(row[col]):
+                    try:
+                        candidate = json.loads(str(row[col]))
+                        if isinstance(candidate, list) and len(candidate) == 4:
+                            bbox = candidate
+                            break
+                    except (ValueError, TypeError):
+                        pass
 
         return {
             "project": str(project).strip(),
@@ -477,32 +656,55 @@ class DataLoader:
         }
 
     def _classify_type(self, val, sheet_hint=""):
-        """Classify raw type string into standardized type."""
+        """Classify raw type string into standardized type.
+
+        Checks the sheet-name lookup table first (authoritative for this
+        workbook, which has no explicit type column on any sheet), then
+        falls back to keyword matching on `val` / the sheet name — kept for
+        workbooks that DO carry an explicit type column, or sheets added
+        later that aren't yet in SHEET_META.
+        """
+        meta = SHEET_META.get(sheet_hint)
+        if meta is None:
+            meta = SHEET_META.get(sheet_hint.strip())
+        if meta is not None:
+            return meta[0]
+
         v = val.lower()
         sh = sheet_hint.lower()
 
         if "transmission" in v or "transmission" in sh:
             return "Transmission Line"
-        if "hydro" in v:
-            if "<=1" in v or "micro" in v or "mini" in v or "pico" in v:
+        if "hydro" in v or "hydro" in sh:
+            if "<=1" in v or "micro" in v or "mini" in v or "pico" in v or "less" in sh:
                 return "Hydro (<=1MW)"
             return "Hydro (>1MW)"
-        if "solar" in v or "pv" in v:
+        if "solar" in v or "pv" in v or "solar" in sh:
             return "Solar"
-        if "wind" in v:
+        if "wind" in v or "wind" in sh:
             return "Wind"
-        if "thermal" in v or "coal" in v or "gas" in v or "diesel" in v:
+        if "thermal" in v or "coal" in v or "gas" in v or "diesel" in v or "thermal" in sh:
             return "Thermal"
-        if "biomass" in v:
+        if "biomass" in v or "biomass" in sh:
             return "Biomass"
-        if "co-gen" in v or "cogeneration" in v:
+        if "co-gen" in v or "cogeneration" in v or "cogeneration" in sh:
             return "Co-generation"
-        if "gon" in v or "study" in v:
+        if "gon" in v or "study" in v or ("gon" in sh and "study" in sh):
             return "GoN Study"
         return "Other"
 
-    def _classify_status(self, val):
-        """Classify raw status string into standardized status."""
+    def _classify_status(self, val, sheet_hint=""):
+        """Classify raw status string into standardized status.
+
+        Checks SHEET_META first (see _classify_type); falls back to keyword
+        matching on `val` for workbooks with an explicit status column.
+        """
+        meta = SHEET_META.get(sheet_hint)
+        if meta is None:
+            meta = SHEET_META.get(sheet_hint.strip())
+        if meta is not None:
+            return meta[1]
+
         v = val.lower()
         if "cancel" in v or "terminated" in v or "revoke" in v:
             return "Cancelled"
