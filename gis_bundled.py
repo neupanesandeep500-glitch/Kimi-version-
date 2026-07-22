@@ -1,24 +1,54 @@
 """
 gis_bundled.py
 
-Bundled, simplified Nepal district and protected area boundaries as inline
-GeoJSON. This eliminates the need for external shapefile uploads or Drive
-syncs — the map works immediately on first deploy with zero configuration.
+Real Nepal province / district / local-body / national-boundary geometry,
+simplified from the official Survey Department "hermes_NPL_new_wgs" shapefile
+the user supplied (4 layers: national boundary, 7 provinces, 77 districts,
+776 local bodies) and shipped as repo assets under data/gis/*.geojson so the
+map works immediately on first deploy with zero configuration.
 
-The data was simplified from the official Nepal Survey Department boundaries
-using mapshaper with ~10% vertex retention, then converted to GeoJSON format.
-District names and province assignments match the federal structure (7 provinces,
-77 districts post-2015).
-
-To regenerate from a newer shapefile:
-    1. Simplify: mapshaper -i hermes_NPL_new_wgs.shp -simplify 10% -o simplified.shp
-    2. Convert: python -c "import shapefile; ..." (see tools/ folder)
-    3. Paste output into NEPAL_DISTRICTS_GEOJSON below
+Regeneration (if a newer shapefile is supplied):
+    python3 - <<'PY'
+    import geopandas as gpd, json
+    PROVINCE_NUM_TO_NAME = {1:"Koshi",2:"Madhesh",3:"Bagmati",4:"Gandaki",
+                            5:"Lumbini",6:"Karnali",7:"Sudurpaschim"}
+    # layer 0 = national boundary, 1 = provinces, 2 = districts, 3 = local bodies
+    # simplify tolerances used: 0.01 / 0.008 / 0.006 / 0.004 (degrees)
+    PY
+See data/gis/ for the resulting FeatureCollections. Each district/local-body
+feature's "province" property is already normalized to the app's canonical
+7 province names (Koshi, Madhesh, Bagmati, Gandaki, Lumbini, Karnali,
+Sudurpaschim) via that PROVINCE number -> name mapping, matching official
+post-2015-constitution numbering.
 """
 
-# Simplified Nepal district boundaries (WGS-84)
-# Each feature has: name (district), province (province name)
-NEPAL_DISTRICTS_GEOJSON = {
+import json
+import os
+
+_GIS_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "gis")
+_EMPTY_FC = {"type": "FeatureCollection", "features": []}
+
+
+def _load_geojson_file(filename, fallback):
+    """Read a bundled GeoJSON asset; fall back gracefully (rather than
+    crashing the whole app) if the file is missing from this deploy."""
+    path = os.path.join(_GIS_DATA_DIR, filename)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return fallback
+
+
+# Real geometry, simplified from the Survey Department shapefile:
+NEPAL_PROVINCES_GEOJSON = _load_geojson_file("nepal_provinces.geojson", _EMPTY_FC)
+NEPAL_LOCALBODIES_GEOJSON = _load_geojson_file("nepal_localbodies.geojson", _EMPTY_FC)
+NEPAL_BOUNDARY_GEOJSON = _load_geojson_file("nepal_boundary.geojson", _EMPTY_FC)
+
+# Rough rectangle placeholders — used ONLY if data/gis/nepal_districts.geojson
+# is missing from this deploy (e.g. a fresh checkout that didn't pull the
+# data/ folder). Kept as a last-resort fallback so the app never breaks.
+_NEPAL_DISTRICTS_GEOJSON_PLACEHOLDER = {
     "type": "FeatureCollection",
     "features": [
         {"type": "Feature", "properties": {"name": "Taplejung", "province": "Koshi"}, "geometry": {"type": "Polygon", "coordinates": [[[87.5, 27.2], [87.9, 27.2], [87.9, 27.5], [87.5, 27.5], [87.5, 27.2]]]}},
@@ -99,6 +129,8 @@ NEPAL_DISTRICTS_GEOJSON = {
         {"type": "Feature", "properties": {"name": "Darchula", "province": "Sudurpaschim"}, "geometry": {"type": "Polygon", "coordinates": [[[80.2, 29.5], [81.0, 29.5], [81.0, 30.0], [80.2, 30.0], [80.2, 29.5]]]}},
     ]
 }
+NEPAL_DISTRICTS_GEOJSON = _load_geojson_file("nepal_districts.geojson",
+                                              _NEPAL_DISTRICTS_GEOJSON_PLACEHOLDER)
 
 # Simplified protected areas (national parks, reserves, buffer zones)
 NEPAL_PROTECTED_AREAS_GEOJSON = {
