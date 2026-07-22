@@ -83,14 +83,13 @@ footer.site-footer a:hover { text-decoration: underline; }
 .footer-visitor-counter { color: #ffd166; font-size: 15px; font-weight: 700; letter-spacing: 0.02em; }
 .footer-last-update { color: #9fd8ff; font-size: 14px; font-weight: 600; margin-top: 4px; }
 """
-
 CLOCK_JS = """
 <script>
 function _tickLiveClock() {
   var now = new Date();
   var dateOpts = { weekday: 'long', year: 'numeric', month: 'long', day: '2-digit' };
   var dateStr = now.toLocaleDateString('en-US', dateOpts).toUpperCase();
-  var timeStr = '\uD83D\uDD50 ' + now.toLocaleTimeString('en-US', { hour12: true });
+  var timeStr = '🕐 ' + now.toLocaleTimeString('en-US', { hour12: true });
   document.querySelectorAll('.live-clock-date').forEach(function(el) { el.textContent = dateStr; });
   document.querySelectorAll('.live-clock-time').forEach(function(el) { el.textContent = timeStr; });
 }
@@ -100,9 +99,9 @@ _tickLiveClock();
 function _loadVisitorCount() {
   var el = document.getElementById('visitor-counter');
   fetch('/api/visitor-count').then(function(r) { return r.json(); }).then(function(d) {
-    if (el) { el.textContent = '\uD83D\uDC65 ' + d.count.toLocaleString() + ' visitors'; }
+    if (el) { el.textContent = '👥 ' + d.count.toLocaleString() + ' visitors'; }
   }).catch(function() {
-    if (el) { el.textContent = '\uD83D\uDC65 visitors'; }
+    if (el) { el.textContent = '👥 visitors'; }
   });
 }
 document.addEventListener('DOMContentLoaded', _loadVisitorCount);
@@ -112,6 +111,8 @@ setInterval(function() {
 }, 2000);
 </script>
 """
+
+
 
 app.index_string = f"""<!DOCTYPE html>
 <html><head>{{%metas%}}<title>{{%title%}}</title>{{%favicon%}}{{%css%}}
