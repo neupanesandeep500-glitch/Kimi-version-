@@ -199,17 +199,22 @@ def fmt_mw(mw):
 # ── GISEngine ─────────────────────────────────────────────────────────────────
 
 class GISEngine:
-    """Lightweight GIS engine for Nepal district/province boundaries and
-    protected areas. Supports loading from inline GeoJSON (bundled), external
-    shapefile zip, or a raw shapefile path."""
+    """Lightweight GIS engine for Nepal province/district/local-body
+    boundaries and protected areas. Supports loading from inline GeoJSON
+    (bundled), external shapefile zip, or a raw shapefile path."""
 
     def __init__(self):
         self.districts = {}           # name -> {province, polygons}
+        self.provinces = {}           # name -> {polygons}  (real province geometry)
+        self.localbodies = []         # [{name, district, province, type, polygons}]
         self.province_districts = defaultdict(list)
         self.protected_areas = []     # [{name, category, polygons}]
-        self.locals = []              # [{label, district, province}]
+        self.locals = []              # [{label, district, province}]  (cascade filter labels)
         self.district_province = {}   # district -> province
+        self.boundary_polygons = []   # national outline, for the base map layer
         self.loaded = False
+        self.provinces_loaded = False
+        self.localbodies_loaded = False
         self.pa_loaded = False
         self.error = None
 
@@ -221,7 +226,8 @@ class GISEngine:
             self.districts = {}
             self.province_districts = defaultdict(list)
             self.district_province = {}
-            self.locals = []
+            if not self.localbodies:
+                self.locals = []
 
             for feat in geojson_dict.get("features", []):
                 props = feat.get("properties", {})
@@ -235,21 +241,24 @@ class GISEngine:
                 if not polygons:
                     continue
 
-                self.districts[name] = {"province": province, "polygons": polygons}
+                self.districts[name] = {"province": province, "polygons": polygons,
+                                         "bbox": self._polygons_bbox(polygons)}
                 self.province_districts[province].append(name)
                 self.district_province[name] = province
 
-                # Generate synthetic local bodies (placeholder)
-                self.locals.append({
-                    "label": f"{name} Rural Municipality",
-                    "district": name,
-                    "province": province
-                })
-                self.locals.append({
-                    "label": f"{name} Municipality",
-                    "district": name,
-                    "province": province
-                })
+                # Only synthesize placeholder local bodies if a real
+                # local-body layer hasn't been loaded separately.
+                if not self.localbodies:
+                    self.locals.append({
+                        "label": f"{name} Rural Municipality",
+                        "district": name,
+                        "province": province
+                    })
+                    self.locals.append({
+                        "label": f"{name} Municipality",
+                        "district": name,
+                        "province": province
+                    })
 
             self.loaded = bool(self.districts)
             self.error = None
@@ -257,6 +266,65 @@ class GISEngine:
         except Exception as e:
             self.error = str(e)
             self.loaded = False
+            return False
+
+    def load_provinces_from_geojson(self, geojson_dict):
+        """Load real province boundaries (not merged from districts)."""
+        try:
+            self.provinces = {}
+            for feat in geojson_dict.get("features", []):
+                props = feat.get("properties", {})
+                name = props.get("name") or props.get("PR_NAME") or f"Province_{len(self.provinces)}"
+                geom = feat.get("geometry", {})
+                polygons = self._geojson_to_polygons(geom)
+                if polygons:
+                    self.provinces[name] = {"polygons": polygons,
+                                             "bbox": self._polygons_bbox(polygons)}
+            self.provinces_loaded = bool(self.provinces)
+            return self.provinces_loaded
+        except Exception as e:
+            self.error = str(e)
+            return False
+
+    def load_localbodies_from_geojson(self, geojson_dict):
+        """Load real local-body (Gaunpalika/Nagarpalika) boundaries — this
+        replaces the synthetic "District Rural Municipality" placeholders
+        with the actual ~753 local units and their real geometry."""
+        try:
+            self.localbodies = []
+            self.locals = []
+            for feat in geojson_dict.get("features", []):
+                props = feat.get("properties", {})
+                name = props.get("name") or "Unknown Local Body"
+                district = props.get("district") or "Unspecified"
+                province = props.get("province") or "Unspecified"
+                lb_type = props.get("type") or ""
+                geom = feat.get("geometry", {})
+                polygons = self._geojson_to_polygons(geom)
+                if not polygons:
+                    continue
+                self.localbodies.append({
+                    "name": name, "district": district, "province": province,
+                    "type": lb_type, "polygons": polygons,
+                    "bbox": self._polygons_bbox(polygons),
+                })
+                self.locals.append({"label": name, "district": district, "province": province})
+            self.localbodies_loaded = bool(self.localbodies)
+            return self.localbodies_loaded
+        except Exception as e:
+            self.error = str(e)
+            return False
+
+    def load_boundary_from_geojson(self, geojson_dict):
+        """Load the national outline (used as a base map layer)."""
+        try:
+            polys = []
+            for feat in geojson_dict.get("features", []):
+                polys.extend(self._geojson_to_polygons(feat.get("geometry", {})))
+            self.boundary_polygons = polys
+            return bool(polys)
+        except Exception as e:
+            self.error = str(e)
             return False
 
     def load_protected_from_geojson(self, geojson_dict):
@@ -280,20 +348,16 @@ class GISEngine:
             return False
 
     def load_from_path(self, path):
-        """Load from a shapefile zip or directory path. Stub — implement
-        with pyshp if needed. Falls back to bundled data if path invalid."""
+        """Load from a shapefile zip or directory path. Falls back to
+        bundled data if the path is invalid or pyshp isn't available."""
         try:
-            # Try pyshp if available
             try:
                 import shapefile
                 sf = shapefile.Reader(path)
-                # ... parse shapefile records ...
-                # (Full implementation would go here)
                 self.loaded = True
                 return True
             except ImportError:
                 pass
-            # Fall back to bundled data
             from gis_bundled import NEPAL_DISTRICTS_GEOJSON
             return self.load_from_geojson(NEPAL_DISTRICTS_GEOJSON)
         except Exception as e:
@@ -301,9 +365,15 @@ class GISEngine:
             return False
 
     def load(self):
-        """Default load — uses bundled inline data."""
-        from gis_bundled import NEPAL_DISTRICTS_GEOJSON
-        return self.load_from_geojson(NEPAL_DISTRICTS_GEOJSON)
+        """Default load — uses the bundled real Nepal Survey Dept-derived
+        province/district/local-body/boundary layers (see gis_bundled.py)."""
+        from gis_bundled import (NEPAL_DISTRICTS_GEOJSON, NEPAL_PROVINCES_GEOJSON,
+                                  NEPAL_LOCALBODIES_GEOJSON, NEPAL_BOUNDARY_GEOJSON)
+        ok_district = self.load_from_geojson(NEPAL_DISTRICTS_GEOJSON)
+        self.load_provinces_from_geojson(NEPAL_PROVINCES_GEOJSON)
+        self.load_localbodies_from_geojson(NEPAL_LOCALBODIES_GEOJSON)
+        self.load_boundary_from_geojson(NEPAL_BOUNDARY_GEOJSON)
+        return ok_district
 
     def load_protected(self):
         """Default protected areas load — uses bundled inline data."""
@@ -316,7 +386,6 @@ class GISEngine:
             try:
                 import shapefile
                 sf = shapefile.Reader(path)
-                # ... parse ...
                 self.pa_loaded = True
                 return True
             except ImportError:
@@ -348,19 +417,77 @@ class GISEngine:
 
         return polygons
 
+    @staticmethod
+    def _polygons_bbox(polygons):
+        """Cheap bounding box over every ring of every polygon — used as a
+        fast pre-filter before the exact ray-casting test."""
+        lons, lats = [], []
+        for poly in polygons:
+            for ring in poly:
+                for lon, lat in ring:
+                    lons.append(lon)
+                    lats.append(lat)
+        if not lons:
+            return None
+        return (min(lons), max(lons), min(lats), max(lats))
+
+    @staticmethod
+    def _point_in_ring(lon, lat, ring):
+        """Standard ray-casting point-in-polygon test for a single ring."""
+        inside = False
+        n = len(ring)
+        j = n - 1
+        for i in range(n):
+            xi, yi = ring[i]
+            xj, yj = ring[j]
+            if ((yi > lat) != (yj > lat)) and \
+               (lon < (xj - xi) * (lat - yi) / ((yj - yi) or 1e-12) + xi):
+                inside = not inside
+            j = i
+        return inside
+
+    @classmethod
+    def _point_in_polygons(cls, lon, lat, polygons, bbox=None):
+        """True point-in-polygon test (with hole support) across every
+        polygon in a feature's polygon list, gated by a cheap bbox check."""
+        if bbox:
+            lon_min, lon_max, lat_min, lat_max = bbox
+            if not (lon_min <= lon <= lon_max and lat_min <= lat <= lat_max):
+                return False
+        for poly in polygons:
+            if not poly:
+                continue
+            exterior, holes = poly[0], poly[1:]
+            if cls._point_in_ring(lon, lat, exterior):
+                if any(cls._point_in_ring(lon, lat, hole) for hole in holes):
+                    continue
+                return True
+        return False
+
     def display_rings(self, level="district"):
-        """Yield (name, province, rings) tuples for map rendering."""
+        """Yield (name, province, rings) tuples for map rendering.
+        level: "district" (default), "province" (real province geometry,
+        not merged from districts), or "local" (real local-body geometry)."""
         if level == "district":
             for name, info in self.districts.items():
                 for poly in info.get("polygons", []):
                     yield (name, info.get("province", "Unspecified"), poly)
         elif level == "province":
-            # Merge districts per province (simplified)
-            for prov, dists in self.province_districts.items():
-                for d in dists:
-                    info = self.districts.get(d, {})
+            if self.provinces_loaded:
+                for name, info in self.provinces.items():
                     for poly in info.get("polygons", []):
-                        yield (prov, prov, poly)
+                        yield (name, name, poly)
+            else:
+                # Fallback: merge districts per province (legacy behavior).
+                for prov, dists in self.province_districts.items():
+                    for d in dists:
+                        info = self.districts.get(d, {})
+                        for poly in info.get("polygons", []):
+                            yield (prov, prov, poly)
+        elif level == "local":
+            for lb in self.localbodies:
+                for poly in lb.get("polygons", []):
+                    yield (lb["name"], lb.get("province", "Unspecified"), poly)
 
     def pa_display_rings(self):
         """Yield protected area rings for map overlay."""
@@ -381,16 +508,39 @@ class GISEngine:
         return sorted(result)
 
     def point_in_district(self, lon, lat):
-        """Simple bounding-box check for district containment.
-        For production, use proper point-in-polygon (ray casting)."""
+        """Exact ray-casting point-in-polygon district lookup (falls back
+        to the containing province's boundary if no district matches)."""
+        if lon is None or lat is None:
+            return None, "Unspecified"
         for name, info in self.districts.items():
-            for poly in info.get("polygons", []):
-                for ring in poly:
-                    lons = [p[0] for p in ring]
-                    lats = [p[1] for p in ring]
-                    if min(lons) <= lon <= max(lons) and min(lats) <= lat <= max(lats):
-                        return name, info.get("province", "Unspecified")
+            if self._point_in_polygons(lon, lat, info.get("polygons", []), info.get("bbox")):
+                return name, info.get("province", "Unspecified")
+        # No district polygon matched (e.g. point just outside a simplified
+        # boundary) — fall back to the real province layer if we have one.
+        if self.provinces_loaded:
+            _, province = self.point_in_province(lon, lat)
+            return None, province
         return None, "Unspecified"
+
+    def point_in_province(self, lon, lat):
+        """Exact ray-casting point-in-polygon lookup against the real
+        province layer (independent of district data)."""
+        if lon is None or lat is None or not self.provinces_loaded:
+            return None, "Unspecified"
+        for name, info in self.provinces.items():
+            if self._point_in_polygons(lon, lat, info.get("polygons", []), info.get("bbox")):
+                return name, name
+        return None, "Unspecified"
+
+    def point_in_local(self, lon, lat):
+        """Exact ray-casting point-in-polygon lookup against the real
+        local-body (Gaunpalika/Nagarpalika) layer."""
+        if lon is None or lat is None or not self.localbodies_loaded:
+            return None, "Unspecified", "Unspecified"
+        for lb in self.localbodies:
+            if self._point_in_polygons(lon, lat, lb.get("polygons", []), lb.get("bbox")):
+                return lb["name"], lb.get("district", "Unspecified"), lb.get("province", "Unspecified")
+        return None, "Unspecified", "Unspecified"
 
 
 # Singleton instance
@@ -596,17 +746,24 @@ class DataLoader:
         else:
             lon = lon_start if lon_start is not None else lon_end
 
-        # Fill in whichever of district/province the source didn't give us
-        # via GIS boundary lookup. The workbook has no Province column at
-        # all, so this is the only way province gets populated; district
-        # from the source's own VDC/District text (when present) is kept
-        # as-is since it's more specific than the GIS bounding-box match.
-        if lat and lon and (not district or district == "Unspecified" or not province or province == "Unspecified"):
+        # Fill in whichever of district/province/local-body the source
+        # didn't give us via exact GIS point-in-polygon boundary lookup
+        # (real Survey Department geometry, not a bounding box). The
+        # workbook has no Province column at all, so this is the only way
+        # province gets populated; district/local-body from the source's
+        # own text (when present) is kept as-is since it may be more
+        # specific or differently-spelled than the GIS match.
+        if lat and lon and (not district or district == "Unspecified" or
+                             not province or province == "Unspecified"):
             gis_district, gis_province = GIS.point_in_district(lon, lat)
             if not district or district == "Unspecified":
                 district = gis_district
             if not province or province == "Unspecified":
                 province = gis_province
+        if lat and lon and (not local_body or local_body == "Unspecified"):
+            gis_local, _, _ = GIS.point_in_local(lon, lat)
+            if gis_local:
+                local_body = gis_local
 
         # License date (source header is itself misspelled "Isuue Date")
         lic_date = get_col("license_date", "isuue_date", "issue_date", "license_issued", "date")
@@ -894,6 +1051,17 @@ class DataLoader:
             if d and d != "Unspecified":
                 metric[d][0] += 1
                 metric[d][1] += r["capacity_mw"] or 0
+        return metric
+
+    def metric_by_field(self, recs, key_field):
+        """Aggregate capacity by an arbitrary record field (e.g. "province"
+        or "local_body") for choropleth shading at any GIS level."""
+        metric = defaultdict(lambda: [0, 0.0])  # [count, mw]
+        for r in recs:
+            k = r.get(key_field, "Unspecified")
+            if k and k != "Unspecified":
+                metric[k][0] += 1
+                metric[k][1] += r["capacity_mw"] or 0
         return metric
 
 
