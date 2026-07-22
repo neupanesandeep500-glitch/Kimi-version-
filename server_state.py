@@ -267,7 +267,10 @@ def reload_cached_on_startup():
 def bootstrap_on_startup():
     """Zero-dependency startup. GIS loads from bundled data immediately.
     Workbook loads from env vars or cache if available."""
-    cfg = _read_config_file()
+    # Restore anything previously configured via the admin panel (logo, flag,
+    # hero background, per-type/status/province backgrounds, marquee toggle,
+    # visitor count) so it survives a process/dyno restart.
+    cfg = _sync_state_from_config()
     sheet_url = cfg.get("gs_url") or os.environ.get("DEFAULT_SHEET_URL")
     gis_url = cfg.get("gis_drive_url") or os.environ.get("DEFAULT_GIS_DRIVE_URL")
     pa_url = cfg.get("pa_drive_url") or os.environ.get("DEFAULT_PA_DRIVE_URL")
@@ -340,9 +343,16 @@ def start_background_refresh():
     t.start()
 
 
+import datetime as _dt
+
+# Nepal Standard Time is a fixed UTC+5:45 offset (no daylight-saving rules),
+# so a plain fixed-offset timezone is correct and avoids depending on an
+# IANA tzdata install being present in the deployment environment.
+NEPAL_TZ = _dt.timezone(_dt.timedelta(hours=5, minutes=45), name="NPT")
+
+
 def _now_str():
-    import datetime
-    return datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+    return _dt.datetime.now(NEPAL_TZ).strftime("%Y-%m-%d %H:%M NPT")
 
 
 def get_last_sync():
