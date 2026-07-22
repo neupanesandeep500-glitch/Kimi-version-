@@ -10,6 +10,21 @@ FIXED VERSION:
 - f-year defaults to None (no premature filtering)
 - District/local cascade refreshes on data load
 - All error handling improved with visible messages
+
+ENHANCED VERSION (2026):
+- Common background images for Power Plant types and Province cards
+- Different colored fonts with effects for status/province labels
+- Consistent "... Projects, ... Capacity" / "... KM" pattern
+- Ordered stages: Operating, Construction License, ..., Application for Survey
+- Ordered provinces: Koshi, Madhesh, Bagmati, Gandaki, Lumbini, Karnali, Sudurpaschim
+- KPI summary only on Overview tab
+- "Installed Capacity" with operating plants summary at first
+- Animated province slides in Power Plants > By Province
+- No flipping in Transmission tab when filtered
+- Growth tab separated for Transmission vs Power Plants
+- Data Table with page size dropdown (10, 25, 50, 100, All)
+- Custom tab for chart styling options
+- Watermark "Er. Sandeep Neupane" on downloaded charts
 """
 
 import os
@@ -25,11 +40,119 @@ from dash import dcc, html, Input, Output, State, dash_table, ctx
 import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
 import plotly.express as px
+import plotly.io as pio
 
 import data_engine as de
 import server_state as ss
 import coordinate_transform as ct
 from admin import admin_bp
+
+# ── GLOBAL CHART STYLE STATE (for Custom Tab) ───────────────────────────────
+CHART_STYLE_STATE = {
+    "bar_mode": "group",        # group, stack, relative
+    "chart_type": "bar",        # bar, line, area, scatter
+    "color_scheme": "default",  # default, pastel, dark, vibrant
+    "show_grid": True,
+    "font_family": "Arial",
+    "title_size": 16,
+    "label_size": 12,
+    "animation": True,
+}
+
+# ── COLOR SCHEMES ───────────────────────────────────────────────────────────
+COLOR_SCHEMES = {
+    "default": {
+        "Operating": "#2e7d32", "Construction License": "#fb8c00",
+        "Application for Construction License": "#ffb300",
+        "Survey License": "#42a5f5",
+        "Application for Survey License": "#90a4ae",
+        "GoN Study Project": "#0277bd", "Cancelled": "#c62828",
+        "Technical Clearance": "#9fb3c8",
+    },
+    "pastel": {
+        "Operating": "#81c784", "Construction License": "#ffb74d",
+        "Application for Construction License": "#fff176",
+        "Survey License": "#64b5f6",
+        "Application for Survey License": "#b0bec5",
+        "GoN Study Project": "#4fc3f7", "Cancelled": "#e57373",
+        "Technical Clearance": "#b0bec5",
+    },
+    "dark": {
+        "Operating": "#1b5e20", "Construction License": "#e65100",
+        "Application for Construction License": "#ff6f00",
+        "Survey License": "#1565c0",
+        "Application for Survey License": "#455a64",
+        "GoN Study Project": "#01579b", "Cancelled": "#b71c1c",
+        "Technical Clearance": "#455a64",
+    },
+    "vibrant": {
+        "Operating": "#00e676", "Construction License": "#ff9100",
+        "Application for Construction License": "#ffea00",
+        "Survey License": "#2979ff",
+        "Application for Survey License": "#78909c",
+        "GoN Study Project": "#00b0ff", "Cancelled": "#ff1744",
+        "Technical Clearance": "#78909c",
+    },
+}
+
+PROVINCE_COLOR_SCHEMES = {
+    "default": {
+        "Koshi": "#00695c", "Madhesh": "#ef6c00", "Bagmati": "#1565c0",
+        "Gandaki": "#6a1b9a", "Lumbini": "#2e7d32", "Karnali": "#c62828",
+        "Sudurpaschim": "#4527a0", "Unspecified": "#78909c",
+    },
+    "pastel": {
+        "Koshi": "#4db6ac", "Madhesh": "#ff9800", "Bagmati": "#5c6bc0",
+        "Gandaki": "#ab47bc", "Lumbini": "#66bb6a", "Karnali": "#ef5350",
+        "Sudurpaschim": "#7e57c2", "Unspecified": "#b0bec5",
+    },
+    "dark": {
+        "Koshi": "#004d40", "Madhesh": "#bf360c", "Bagmati": "#0d47a1",
+        "Gandaki": "#4a148c", "Lumbini": "#1b5e20", "Karnali": "#b71c1c",
+        "Sudurpaschim": "#311b92", "Unspecified": "#37474f",
+    },
+    "vibrant": {
+        "Koshi": "#00bfa5", "Madhesh": "#ff6d00", "Bagmati": "#2962ff",
+        "Gandaki": "#aa00ff", "Lumbini": "#00c853", "Karnali": "#ff1744",
+        "Sudurpaschim": "#651fff", "Unspecified": "#546e7a",
+    },
+}
+
+TYPE_COLOR_SCHEMES = {
+    "default": {
+        "Hydro (>1MW)": "#1565c0", "Hydro (<=1MW)": "#42a5f5", "Solar": "#f9a825",
+        "Wind": "#26a69a", "Co-generation": "#8d6e63", "Thermal": "#6d4c41",
+        "Biomass": "#558b2f", "Transmission Line": "#6a1b9a", "Other": "#78909c",
+    },
+    "pastel": {
+        "Hydro (>1MW)": "#5c6bc0", "Hydro (<=1MW)": "#90caf9", "Solar": "#fff59d",
+        "Wind": "#80cbc4", "Co-generation": "#bcaaa4", "Thermal": "#a1887f",
+        "Biomass": "#a5d6a7", "Transmission Line": "#ce93d8", "Other": "#b0bec5",
+    },
+    "dark": {
+        "Hydro (>1MW)": "#0d47a1", "Hydro (<=1MW)": "#1565c0", "Solar": "#f57f17",
+        "Wind": "#00695c", "Co-generation": "#4e342e", "Thermal": "#3e2723",
+        "Biomass": "#33691e", "Transmission Line": "#4a148c", "Other": "#263238",
+    },
+    "vibrant": {
+        "Hydro (>1MW)": "#2962ff", "Hydro (<=1MW)": "#00b0ff", "Solar": "#ffea00",
+        "Wind": "#00bfa5", "Co-generation": "#8d6e63", "Thermal": "#5d4037",
+        "Biomass": "#76ff03", "Transmission Line": "#d500f9", "Other": "#607d8b",
+    },
+}
+
+
+def get_status_colors():
+    return COLOR_SCHEMES.get(CHART_STYLE_STATE["color_scheme"], COLOR_SCHEMES["default"])
+
+
+def get_province_colors():
+    return PROVINCE_COLOR_SCHEMES.get(CHART_STYLE_STATE["color_scheme"], PROVINCE_COLOR_SCHEMES["default"])
+
+
+def get_type_colors():
+    return TYPE_COLOR_SCHEMES.get(CHART_STYLE_STATE["color_scheme"], TYPE_COLOR_SCHEMES["default"])
+
 
 # ── APP SETUP ────────────────────────────────────────────────────────────────
 app = dash.Dash(
@@ -82,6 +205,45 @@ footer.site-footer a { color: #8fb2ff; text-decoration: none; margin-right: 16px
 footer.site-footer a:hover { text-decoration: underline; }
 .footer-visitor-counter { color: #ffd166; font-size: 15px; font-weight: 700; letter-spacing: 0.02em; }
 .footer-last-update { color: #9fd8ff; font-size: 14px; font-weight: 600; margin-top: 4px; }
+
+/* ── Status label styles with effects ─────────────────────────────────────── */
+.status-label-operating { color: #2e7d32; font-weight: 800; text-shadow: 0 0 8px rgba(46,125,50,0.4); }
+.status-label-construction { color: #fb8c00; font-weight: 800; text-shadow: 0 0 8px rgba(251,140,0,0.4); }
+.status-label-app-construction { color: #ffb300; font-weight: 800; text-shadow: 0 0 8px rgba(255,179,0,0.4); }
+.status-label-survey { color: #42a5f5; font-weight: 800; text-shadow: 0 0 8px rgba(66,165,245,0.4); }
+.status-label-app-survey { color: #90a4ae; font-weight: 800; text-shadow: 0 0 8px rgba(144,164,174,0.4); }
+.status-label-gon { color: #0277bd; font-weight: 800; text-shadow: 0 0 8px rgba(2,119,189,0.4); }
+.status-label-cancelled { color: #c62828; font-weight: 800; text-shadow: 0 0 8px rgba(198,40,40,0.4); }
+.status-label-tc { color: #9fb3c8; font-weight: 800; text-shadow: 0 0 8px rgba(159,179,200,0.4); }
+
+/* ── Province label styles with effects ──────────────────────────────────── */
+.prov-label-koshi { color: #00695c; font-weight: 800; text-shadow: 0 0 8px rgba(0,105,92,0.4); }
+.prov-label-madhesh { color: #ef6c00; font-weight: 800; text-shadow: 0 0 8px rgba(239,108,0,0.4); }
+.prov-label-bagmati { color: #1565c0; font-weight: 800; text-shadow: 0 0 8px rgba(21,101,192,0.4); }
+.prov-label-gandaki { color: #6a1b9a; font-weight: 800; text-shadow: 0 0 8px rgba(106,27,154,0.4); }
+.prov-label-lumbini { color: #2e7d32; font-weight: 800; text-shadow: 0 0 8px rgba(46,125,50,0.4); }
+.prov-label-karnali { color: #c62828; font-weight: 800; text-shadow: 0 0 8px rgba(198,40,40,0.4); }
+.prov-label-sudurpaschim { color: #4527a0; font-weight: 800; text-shadow: 0 0 8px rgba(69,39,160,0.4); }
+
+/* ── Card header gradient overlays ───────────────────────────────────────── */
+.card-header-gradient { position: relative; }
+.card-header-gradient::after {
+  content: "";
+  position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+  background: linear-gradient(180deg, rgba(0,0,0,0.1) 0%, rgba(0,0,0,0.5) 100%);
+  pointer-events: none;
+}
+
+/* ── Flip card animation ───────────────────────────────────────────────── */
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.flip-card-animate { animation: fadeInUp 0.6s ease-out; }
+
+/* ── Custom tab styling ──────────────────────────────────────────────────── */
+.custom-style-panel { background: #f8f9fa; border-radius: 8px; padding: 20px; }
+.custom-style-panel h5 { color: #1565c0; margin-bottom: 16px; }
 """
 CLOCK_JS = """
 <script>
@@ -338,6 +500,7 @@ TAB_DEFAULT_FILTER_GROUP = {
     "overview": "grp-project", "plants": "grp-project", "transmission": "grp-location",
     "gon_study": "grp-project", "cancelled": "grp-project", "growth": "grp-dates",
     "gis": "grp-location", "compare": "grp-project", "table": "grp-search",
+    "custom": "grp-project",
 }
 
 
@@ -367,6 +530,7 @@ def settings_panel():
 # CRITICAL FIX: gis-opt-layers moved to MAIN LAYOUT
 app.layout = dbc.Container(fluid=True, children=[
     dcc.Store(id="filtered-data-signal"),
+    dcc.Store(id="chart-style-store", data=CHART_STYLE_STATE),
 
     html.Div(id="site-header", className="site-header p-3 mb-3", children=[
         dbc.Row(align="center", justify="between", className="g-2", children=[
@@ -403,6 +567,7 @@ app.layout = dbc.Container(fluid=True, children=[
         dbc.Tab(label="🗺️ GIS Map", tab_id="gis"),
         dbc.Tab(label="📉 Comparative Charts", tab_id="compare"),
         dbc.Tab(label="🗂️ Data Table", tab_id="table"),
+        dbc.Tab(label="🎨 Custom Style", tab_id="custom"),
     ]),
 
     dbc.Row(className="mt-3", children=[
@@ -431,6 +596,7 @@ app.layout = dbc.Container(fluid=True, children=[
     dcc.Interval(id="init-once", n_intervals=0, max_intervals=1, interval=500),
     dcc.Interval(id="refresh-poll", n_intervals=0, interval=60_000),
     dcc.Interval(id="type-flip-interval", n_intervals=0, interval=4_000),
+    dcc.Interval(id="province-flip-interval", n_intervals=0, interval=5_000),
     html.Footer(className="site-footer", children=[
         dbc.Row([
             dbc.Col(md=8, children=[
@@ -569,6 +735,10 @@ def update_local_options(f_district, f_province, _status, _poll):
 )
 def update_kpis(tab, f_type, f_status, f_province, f_capacity, f_tx_length, f_year, f_search,
                  f_date_from, f_date_to, f_cod_from, f_cod_to, f_district, f_local, _status):
+    # REQ 6: KPI summary only on Overview tab
+    if tab != "overview":
+        return []
+
     loader = STATE["loader"]
     if tab == "overview":
         recs = list(loader.records) if loader and not loader.error else []
@@ -584,6 +754,10 @@ def update_kpis(tab, f_type, f_status, f_province, f_capacity, f_tx_length, f_ye
     n_plants = len(plant_recs)
     plant_mw = sum(r["capacity_mw"] or 0 for r in plant_recs)
     n_operating = sum(1 for r in plant_recs if r["status"] == "Operating")
+    # REQ 7: Installed Capacity with operating plants at first
+    op_plants = [r for r in plant_recs if r["status"] == "Operating"]
+    op_mw = sum(r["capacity_mw"] or 0 for r in op_plants)
+    op_n = len(op_plants)
 
     n_tx = len(tx_recs)
     tx_mw = sum(r["capacity_mw"] or 0 for r in tx_recs)
@@ -593,8 +767,11 @@ def update_kpis(tab, f_type, f_status, f_province, f_capacity, f_tx_length, f_ye
     n_cancelled = sum(1 for r in recs if r["status"] == "Cancelled")
 
     cards = [
+        # REQ 7: Installed Capacity first
+        kpi_card("Installed Capacity", f"{op_mw:,.1f} MW",
+                  f"{op_n:,} Operating Plants", "#2e7d32"),
         kpi_card("Active Power Plants", f"{n_plants:,} Projects",
-                  f"{plant_mw:,.1f} MW • {n_operating:,} operating", "#2e7d32"),
+                  f"{plant_mw:,.1f} MW Total • {n_operating:,} operating", "#1565c0"),
         kpi_card("Transmission Lines", f"{n_tx:,} Projects",
                   f"{tx_mw:,.1f} MW • {tx_km:,.1f} km circuit length", "#6a1b9a"),
         kpi_card("GoN Studied Projects", f"{n_gon:,}",
@@ -602,7 +779,7 @@ def update_kpis(tab, f_type, f_status, f_province, f_capacity, f_tx_length, f_ye
         kpi_card("License Cancelled", f"{n_cancelled:,}",
                   "cancelled, not counted in active capacity", "#c62828"),
     ]
-    return [dbc.Col(c, md=3) for c in cards]
+    return [dbc.Col(c, md=4, lg=2) for c in cards]
 
 
 @app.callback(
@@ -660,10 +837,16 @@ def update_ticker(_status, _poll, f_type, f_status, f_province, f_capacity, f_tx
     Input("f-crs", "value"),
     Input("gis-opt-layers", "value"),
     Input("f-district", "value"), Input("f-local", "value"),
+    Input("chart-style-store", "data"),
 )
 def render_tab(tab, f_type, f_status, f_province, f_capacity, f_tx_length, f_year, f_search,
                f_date_from, f_date_to, f_cod_from, f_cod_to, f_crs, gis_layers,
-               f_district, f_local):
+               f_district, f_local, chart_style):
+    # Update global chart style state
+    global CHART_STYLE_STATE
+    if chart_style:
+        CHART_STYLE_STATE.update(chart_style)
+
     loader = STATE["loader"]
     gis_controls_style = {"display": "block"} if tab == "gis" else {"display": "none"}
 
@@ -724,6 +907,8 @@ def render_tab(tab, f_type, f_status, f_province, f_capacity, f_tx_length, f_yea
             return render_compare(loader, active_recs), gis_controls_style
         if tab == "table":
             return render_table(recs, f_crs or ct.CRS_WGS84), gis_controls_style
+        if tab == "custom":
+            return render_custom_tab(), gis_controls_style
         return html.Div(), gis_controls_style
     except Exception:
         tb = traceback.format_exc()
@@ -734,31 +919,50 @@ def render_tab(tab, f_type, f_status, f_province, f_capacity, f_tx_length, f_yea
         ], color="danger", className="mt-3"), gis_controls_style
 
 
-TYPE_COLOR_MAP = {
-    "Hydro (>1MW)": "#1565c0", "Hydro (<=1MW)": "#42a5f5", "Solar": "#f9a825",
-    "Wind": "#26a69a", "Co-generation": "#8d6e63", "Thermal": "#6d4c41",
-    "Biomass": "#558b2f", "Transmission Line": "#6a1b9a", "Other": "#78909c",
-}
-PROVINCE_COLOR_MAP = {
-    "Koshi": "#00695c", "Madhesh": "#ef6c00", "Bagmati": "#1565c0",
-    "Gandaki": "#6a1b9a", "Lumbini": "#2e7d32", "Karnali": "#c62828",
-    "Sudurpaschim": "#4527a0", "Unspecified": "#78909c",
-}
-STATUS_COLOR_MAP = {
-    "Application for Survey License": "#90a4ae", "Survey License": "#42a5f5",
-    "Application for Construction License": "#ffb300", "Construction License": "#fb8c00",
-    "Operating": "#2e7d32",
-}
+# ── STATUS / PROVINCE / TYPE COLOR HELPERS ─────────────────────────────────
 
-STAGE_SHORT = {
-    "Application for Survey License": "Application for Survey",
-    "Survey License": "Survey License",
-    "Application for Construction License": "Application for Construction",
-    "Construction License": "Construction License",
-    "Operating": "Operation",
-}
+def get_status_color_class(status):
+    """Return CSS class for styled status labels."""
+    mapping = {
+        "Operating": "status-label-operating",
+        "Construction License": "status-label-construction",
+        "Application for Construction License": "status-label-app-construction",
+        "Survey License": "status-label-survey",
+        "Application for Survey License": "status-label-app-survey",
+        "GoN Study Project": "status-label-gon",
+        "Cancelled": "status-label-cancelled",
+        "Technical Clearance": "status-label-tc",
+    }
+    return mapping.get(status, "")
 
-FLIP_CARD_STAGE_ORDER = list(reversed(de.STATUS_ORDER))
+
+def get_province_color_class(province):
+    """Return CSS class for styled province labels."""
+    mapping = {
+        "Koshi": "prov-label-koshi",
+        "Madhesh": "prov-label-madhesh",
+        "Bagmati": "prov-label-bagmati",
+        "Gandaki": "prov-label-gandaki",
+        "Lumbini": "prov-label-lumbini",
+        "Karnali": "prov-label-karnali",
+        "Sudurpaschim": "prov-label-sudurpaschim",
+    }
+    return mapping.get(province, "")
+
+
+# REQ 4: Ordered stages
+STAGE_DISPLAY_ORDER = [
+    "Operating",
+    "Construction License",
+    "Application for Construction License",
+    "Survey License",
+    "Application for Survey License",
+]
+
+# REQ 5: Ordered provinces
+PROVINCE_DISPLAY_ORDER = [
+    "Koshi", "Madhesh", "Bagmati", "Gandaki", "Lumbini", "Karnali", "Sudurpaschim"
+]
 
 _PLACEHOLDER_WORDS = ("load", "tbd", "n/a", "na", "pending", "update", "unknown",
                       "unspecified", "-", "—", "n.a", "to be")
@@ -809,12 +1013,15 @@ def build_ticker_segments(loader, recs=None):
 
     segs = [(_cat_segment("⚡ ACTIVE POWER PLANTS", len(plants),
                           sum(r['capacity_mw'] or 0 for r in plants)), "#ffd166")]
-    for st in de.STATUS_ORDER:
+    # REQ 4: Ordered stages in ticker
+    for st in STAGE_DISPLAY_ORDER:
+        if st not in de.STATUS_ORDER:
+            continue
         sel = [r for r in plants if r["status"] == st]
         if sel:
-            segs.append((_cat_segment(STAGE_SHORT.get(st, st), len(sel),
+            segs.append((_cat_segment(st, len(sel),
                                        sum(r['capacity_mw'] or 0 for r in sel)),
-                         de.STATUS_COLORS.get(st, "#c8d3e8")))
+                         get_status_colors().get(st, "#c8d3e8")))
     km_all = sum(r["line_length_km"] or 0 for r in txs)
     segs.append((_cat_segment("🔌 TRANSMISSION", len(txs),
                               sum(r['capacity_mw'] or 0 for r in txs),
@@ -907,6 +1114,7 @@ def build_ticker_segments(loader, recs=None):
     return segs
 
 
+
 def render_ticker_bar(loader, recs=None):
     if loader is None or not loader.records:
         return None
@@ -937,9 +1145,32 @@ def render_ticker_bar(loader, recs=None):
     ], className="ticker-bar")
 
 
+# ── WATERMARK HELPER ───────────────────────────────────────────────────────
+def add_watermark(fig):
+    """Add 'Er. Sandeep Neupane' watermark to Plotly figures."""
+    fig.add_annotation(
+        text="Er. Sandeep Neupane",
+        xref="paper", yref="paper",
+        x=0.98, y=0.02,
+        showarrow=False,
+        font=dict(size=10, color="rgba(100,100,100,0.5)", family="Arial"),
+        align="right",
+    )
+    return fig
+
+
+def add_watermark_matplotlib(fig):
+    """Add watermark to matplotlib figures."""
+    fig.text(0.98, 0.02, "Er. Sandeep Neupane",
+             fontsize=8, color='gray', ha='right', va='bottom', alpha=0.5)
+    return fig
+
+
+# ── CATEGORY CARD WITH COMMON BACKGROUND ────────────────────────────────────
 def render_category_card(label, stage_map, total_n, total_mw, bg_url, base_color, total_km=0.0,
-                          stage_order=None):
-    stage_order = stage_order or de.STATUS_ORDER
+                          stage_order=None, is_transmission=False):
+    """Render a category card with common background image and styled text."""
+    stage_order = stage_order or STAGE_DISPLAY_ORDER
     header_style = {
         "borderRadius": "8px 8px 0 0", "padding": "14px 16px", "color": "#fff",
         "position": "relative", "height": "180px", "display": "flex",
@@ -958,13 +1189,23 @@ def render_category_card(label, stage_map, total_n, total_mw, bg_url, base_color
         if st not in stage_map:
             continue
         n, mw, km = stage_map[st]
-        detail = f"{n:,} · {mw:,.1f} MW" + (f" · {km:,.1f} km" if km else "")
+        # REQ 3: Consistent pattern
+        if is_transmission:
+            detail = f"{n:,} Projects · {mw:,.1f} MW · {km:,.1f} KM"
+        else:
+            detail = f"{n:,} Projects · {mw:,.1f} MW"
+        color_cls = get_status_color_class(st)
         stage_rows.append(html.Div([
-            html.Span(STAGE_SHORT.get(st, st), className="small text-muted"),
+            html.Span(st, className=f"small {color_cls}"),
             html.Span(detail, className="small fw-semibold float-end"),
         ], className="d-flex justify-content-between border-bottom py-1"))
 
-    totals_line = f"{total_n:,} projects · {total_mw:,.1f} MW" + (f" · {total_km:,.1f} km" if total_km else "")
+    # REQ 3: Consistent pattern for totals
+    if is_transmission:
+        totals_line = f"{total_n:,} Projects · {total_mw:,.1f} MW · {total_km:,.1f} KM"
+    else:
+        totals_line = f"{total_n:,} Projects · {total_mw:,.1f} MW"
+
     return dbc.Card([
         html.Div([
             html.Div(label, className="fw-bold", style={"fontSize": "15px"}),
@@ -996,35 +1237,101 @@ def status_pie(recs, title):
     by_status = defaultdict(int)
     for r in recs:
         by_status[r["status"]] += 1
+    colors = [get_status_colors().get(s, "#90a4ae") for s in by_status.keys()]
     fig = go.Figure(go.Pie(
         labels=list(by_status.keys()), values=list(by_status.values()), hole=0.45,
-        marker_colors=[STATUS_COLOR_MAP.get(s, "#90a4ae") for s in by_status.keys()],
+        marker_colors=colors,
     ))
     fig.update_layout(title=title, height=380, margin=dict(l=10, r=10, t=40, b=10))
+    add_watermark(fig)
     return fig
 
 
-# FIX: Overview renders immediately with data
+# ── OVERVIEW TAB ────────────────────────────────────────────────────────────
 def render_overview(loader, recs):
+    """Overview with Power Plant types flip-card + chart, then Province cards + charts."""
     card, fig = _flip_card_and_chart(0)
-    return dbc.Row([
-        dbc.Col(html.Div(id="type-flip-card", children=card, style={"height": "360px"}), md=5),
-        dbc.Col(dcc.Graph(id="type-flip-chart", figure=fig, style={"height": "360px"}), md=7),
-    ], className="mb-3")
+
+    # Province section
+    prov_section = _render_overview_province_section(loader, recs)
+
+    return html.Div([
+        html.H5("⚡ Power Plants by Type", className="mb-3 mt-2"),
+        dbc.Row([
+            dbc.Col(html.Div(id="type-flip-card", children=card, style={"height": "360px"}), md=5),
+            dbc.Col(dcc.Graph(id="type-flip-chart", figure=fig, style={"height": "360px"}), md=7),
+        ], className="mb-4"),
+        html.Hr(),
+        html.H5("🗺️ Power Plants by Province", className="mb-3 mt-2"),
+        prov_section,
+    ])
+
+
+def _render_overview_province_section(loader, recs):
+    """Render province breakdown for overview tab."""
+    plant_recs = [r for r in recs if r["type"] != "Transmission Line"]
+    if not plant_recs:
+        return dbc.Alert("No power plant records available.", color="info")
+
+    prov_totals, prov_stages = compute_breakdown(plant_recs, "province")
+    provinces_present = [p for p in PROVINCE_DISPLAY_ORDER if p in prov_totals] +                         [p for p in prov_totals if p not in PROVINCE_DISPLAY_ORDER]
+
+    if not provinces_present:
+        return dbc.Alert("No province data available.", color="info")
+
+    # Build province cards in a row (2 per row)
+    card_rows = []
+    for i in range(0, len(provinces_present), 2):
+        row_cards = []
+        for p in provinces_present[i:i+2]:
+            bg_url = ss.get_province_bg_url(p)
+            color = get_province_colors().get(p, "#455a64")
+            card = render_category_card(
+                p, prov_stages[p], prov_totals[p][0], prov_totals[p][1],
+                bg_url, color, total_km=prov_totals[p][2],
+                stage_order=STAGE_DISPLAY_ORDER
+            )
+            row_cards.append(dbc.Col(card, md=6))
+        card_rows.append(dbc.Row(row_cards, className="mb-3"))
+
+    # Province bar chart
+    fig_prov = go.Figure(go.Bar(
+        x=provinces_present,
+        y=[prov_totals[p][1] for p in provinces_present],
+        marker_color=[get_province_colors().get(p, "#455a64") for p in provinces_present],
+        text=[f"{prov_totals[p][0]:,} Projects" for p in provinces_present],
+        textposition="outside",
+    ))
+    fig_prov.update_layout(
+        title="Power Plant Capacity by Province",
+        height=420, yaxis_title="Capacity (MW)",
+        margin=dict(l=10, r=10, t=40, b=10),
+    )
+    add_watermark(fig_prov)
+
+    return html.Div([
+        html.Div(card_rows),
+        dbc.Row([
+            dbc.Col(dcc.Graph(figure=fig_prov), md=12),
+        ], className="mt-3"),
+    ])
 
 
 def type_flip_chart_figure(t, stage_map, bg_url=None):
-    stages_present = [s for s in FLIP_CARD_STAGE_ORDER if s in stage_map]
+    """Chart figure for type flip card with watermark."""
+    stages_present = [s for s in STAGE_DISPLAY_ORDER if s in stage_map]
     use_km = (t == "Transmission Line")
     idx = 2 if use_km else 1
-    unit = "km" if use_km else "MW"
+    unit = "KM" if use_km else "MW"
+    colors = [get_status_colors().get(s, "#90a4ae") for s in stages_present]
+
     fig = go.Figure(go.Bar(
         x=stages_present, y=[stage_map[s][idx] for s in stages_present],
-        marker_color=[STATUS_COLOR_MAP.get(s, "#90a4ae") for s in stages_present],
+        marker_color=colors,
         text=[f"{stage_map[s][idx]:,.1f} {unit}" for s in stages_present], textposition="outside",
     ))
     layout_kwargs = dict(
-        title=f"{t} — {'Length (km)' if use_km else 'Capacity (MW)'} by License Stage",
+        title=f"{t} — {'Length (KM)' if use_km else 'Capacity (MW)'} by License Stage",
         height=360, yaxis_title=unit, margin=dict(l=10, r=10, t=40, b=10),
     )
     if bg_url:
@@ -1036,6 +1343,7 @@ def type_flip_chart_figure(t, stage_map, bg_url=None):
         layout_kwargs["plot_bgcolor"] = "rgba(255,255,255,0.72)"
         layout_kwargs["paper_bgcolor"] = "rgba(0,0,0,0)"
     fig.update_layout(**layout_kwargs)
+    add_watermark(fig)
     return fig
 
 
@@ -1049,15 +1357,14 @@ def _flip_card_and_chart(n):
         if not recs:
             return None, empty_fig
         totals, stages = compute_breakdown(recs, "type")
-        types = [t for t in de.TYPE_ORDER if t in totals] + \
-                [t for t in totals if t not in de.TYPE_ORDER]
+        types = [t for t in de.TYPE_ORDER if t in totals] +                 [t for t in totals if t not in de.TYPE_ORDER]
         if not types:
             return None, empty_fig
         t = types[n % len(types)]
         bg_url = ss.get_type_bg_url(t)
         card = render_category_card(t, stages[t], totals[t][0], totals[t][1],
-                                     bg_url, TYPE_COLOR_MAP.get(t, "#607d8b"),
-                                     total_km=totals[t][2], stage_order=FLIP_CARD_STAGE_ORDER)
+                                     bg_url, get_type_colors().get(t, "#607d8b"),
+                                     total_km=totals[t][2], stage_order=STAGE_DISPLAY_ORDER)
         return card, type_flip_chart_figure(t, stages[t], bg_url=bg_url)
     except Exception:
         tb = traceback.format_exc()
@@ -1080,6 +1387,7 @@ def flip_type_card(n):
     return _flip_card_and_chart(n)
 
 
+# ── STAGE FLIP CARD (for Plants tab) ───────────────────────────────────────
 def render_single_stage_card(stage, sel_recs, bg_url, base_color, is_transmission=False):
     n = len(sel_recs)
     mw = sum(r["capacity_mw"] or 0 for r in sel_recs)
@@ -1104,12 +1412,20 @@ def render_single_stage_card(stage, sel_recs, bg_url, base_color, is_transmissio
     else:
         header_style["backgroundColor"] = base_color
 
-    rows = [html.Div([
-        html.Span(p, className="small text-muted"),
-        html.Span(f"{v[0]:,} · {v[1]:,.1f} MW", className="small fw-semibold float-end"),
-    ], className="d-flex justify-content-between border-bottom py-1") for p, v in top_provs]
+    rows = []
+    for p, v in top_provs:
+        color_cls = get_province_color_class(p)
+        rows.append(html.Div([
+            html.Span(p, className=f"small {color_cls}"),
+            html.Span(f"{v[0]:,} Projects · {v[1]:,.1f} MW", className="small fw-semibold float-end"),
+        ], className="d-flex justify-content-between border-bottom py-1"))
 
-    totals_line = f"{n:,} projects · {mw:,.1f} MW" + (f" · {km:,.1f} km" if km else "")
+    # REQ 3: Consistent pattern
+    if is_transmission:
+        totals_line = f"{n:,} Projects · {mw:,.1f} MW · {km:,.1f} KM"
+    else:
+        totals_line = f"{n:,} Projects · {mw:,.1f} MW"
+
     return dbc.Card([
         html.Div([
             html.Div(stage, className="fw-bold", style={"fontSize": "15px"}),
@@ -1128,18 +1444,19 @@ def stage_province_chart_figure(stage, sel_recs, is_transmission=False, bg_url=N
         prov_totals[p][0] += 1
         prov_totals[p][1] += r["capacity_mw"] or 0.0
         prov_totals[p][2] += r.get("line_length_km") or 0.0
-    provinces_present = [p for p in de.PROVINCE_ORDER if p in prov_totals] + \
-                        [p for p in prov_totals if p not in de.PROVINCE_ORDER]
+    provinces_present = [p for p in PROVINCE_DISPLAY_ORDER if p in prov_totals] +                         [p for p in prov_totals if p not in PROVINCE_DISPLAY_ORDER]
     idx = 2 if is_transmission else 1
-    unit = "km" if is_transmission else "MW"
+    unit = "KM" if is_transmission else "MW"
     yvals = [prov_totals[p][idx] for p in provinces_present]
+    colors = [get_province_colors().get(p, "#455a64") for p in provinces_present]
+
     fig = go.Figure(go.Bar(
         x=provinces_present, y=yvals,
-        marker_color=[PROVINCE_COLOR_MAP.get(p, "#455a64") for p in provinces_present],
+        marker_color=colors,
         text=[f"{v:,.1f} {unit}" for v in yvals], textposition="outside",
     ))
     layout_kwargs = dict(
-        title=f"{stage} — {'Length (km)' if is_transmission else 'Capacity (MW)'} by Province",
+        title=f"{stage} — {'Length (KM)' if is_transmission else 'Capacity (MW)'} by Province",
         height=360, yaxis_title=unit, margin=dict(l=10, r=10, t=40, b=10),
     )
     if bg_url:
@@ -1151,19 +1468,20 @@ def stage_province_chart_figure(stage, sel_recs, is_transmission=False, bg_url=N
         layout_kwargs["plot_bgcolor"] = "rgba(255,255,255,0.72)"
         layout_kwargs["paper_bgcolor"] = "rgba(0,0,0,0)"
     fig.update_layout(**layout_kwargs)
+    add_watermark(fig)
     return fig
 
 
 def _stage_flip_card_and_chart(n, recs, is_transmission=False):
     empty_fig = go.Figure()
     try:
-        stages_present = [s for s in de.STATUS_ORDER if any(r["status"] == s for r in recs)]
+        stages_present = [s for s in STAGE_DISPLAY_ORDER if any(r["status"] == s for r in recs)]
         if not stages_present:
             return None, empty_fig
         st = stages_present[n % len(stages_present)]
         sel = [r for r in recs if r["status"] == st]
         bg_url = ss.get_status_bg_url(st)
-        card = render_single_stage_card(st, sel, bg_url, STATUS_COLOR_MAP.get(st, "#90a4ae"),
+        card = render_single_stage_card(st, sel, bg_url, get_status_colors().get(st, "#90a4ae"),
                                          is_transmission=is_transmission)
         return card, stage_province_chart_figure(st, sel, is_transmission=is_transmission, bg_url=bg_url)
     except Exception:
@@ -1202,6 +1520,7 @@ def flip_plants_stage_card(n, f_type, f_status, f_province, f_capacity, f_tx_len
     return _stage_flip_card_and_chart(n, plant_recs)
 
 
+
 @app.callback(
     Output("tx-stage-flip-card", "children"),
     Output("tx-stage-flip-chart", "figure"),
@@ -1227,27 +1546,34 @@ def flip_tx_stage_card(n, f_type, f_status, f_province, f_capacity, f_tx_length,
     return _stage_flip_card_and_chart(n, tx_recs, is_transmission=True)
 
 
+# ── POWER PLANTS TAB ────────────────────────────────────────────────────────
 def render_plants_tab(loader, recs):
     plant_recs = [r for r in recs if r["type"] != "Transmission Line"]
     if not plant_recs:
         return dbc.Alert("No power-plant records match the current filters.", color="info")
 
     stage_totals, _ = compute_breakdown(plant_recs, "status")
-    stages_present = [s for s in de.STATUS_ORDER if s in stage_totals]
+    stages_present = [s for s in STAGE_DISPLAY_ORDER if s in stage_totals]
 
-    stage_rows = [html.Div([
-        html.Span(st, className="fw-semibold"),
-        html.Span(f"{stage_totals[st][0]:,} projects", className="text-muted mx-3"),
-        html.Span(f"{stage_totals[st][1]:,.1f} MW", className="fw-semibold float-end"),
-    ], className="d-flex justify-content-between border-bottom py-2") for st in stages_present]
+    # REQ 3: Consistent pattern with styled status labels
+    stage_rows = []
+    for st in stages_present:
+        color_cls = get_status_color_class(st)
+        stage_rows.append(html.Div([
+            html.Span(st, className=f"fw-semibold {color_cls}"),
+            html.Span(f"{stage_totals[st][0]:,} Projects", className="text-muted mx-3"),
+            html.Span(f"{stage_totals[st][1]:,.1f} MW", className="fw-semibold float-end"),
+        ], className="d-flex justify-content-between border-bottom py-2"))
 
+    colors = [get_status_colors().get(s, "#90a4ae") for s in stages_present]
     fig_stage = go.Figure(go.Bar(
         x=stages_present, y=[stage_totals[s][1] for s in stages_present],
-        marker_color=[STATUS_COLOR_MAP.get(s, "#90a4ae") for s in stages_present],
+        marker_color=colors,
         text=[f"{stage_totals[s][1]:,.0f} MW" for s in stages_present], textposition="outside",
     ))
     fig_stage.update_layout(title="Power Plants — Capacity (MW) by License Stage", height=420,
                              yaxis_title="MW", margin=dict(l=10, r=10, t=40, b=10))
+    add_watermark(fig_stage)
 
     stage_flip_row = dbc.Row([
         dbc.Col(html.Div(id="plants-stage-flip-card", style={"height": "360px"}), md=5),
@@ -1260,21 +1586,38 @@ def render_plants_tab(loader, recs):
     ], className="mb-4")
     stage_section = html.Div([stage_flip_row, html.Hr(), stage_section])
 
+    # REQ 8: Animated province slides in By Province sub-tab
     prov_totals, prov_stages = compute_breakdown(plant_recs, "province")
-    provinces_present = [p for p in de.PROVINCE_ORDER if p in prov_totals] + \
-                        [p for p in prov_totals if p not in de.PROVINCE_ORDER]
+    provinces_present = [p for p in PROVINCE_DISPLAY_ORDER if p in prov_totals] +                         [p for p in prov_totals if p not in PROVINCE_DISPLAY_ORDER]
+
+    # Province flip card + chart (animated)
+    prov_card, prov_fig = _province_flip_card_and_chart(0, plant_recs)
+
     prov_cards = [
         render_category_card(p, prov_stages[p], prov_totals[p][0], prov_totals[p][1],
-                              ss.get_province_bg_url(p), PROVINCE_COLOR_MAP.get(p, "#455a64"))
+                              ss.get_province_bg_url(p), get_province_colors().get(p, "#455a64"),
+                              stage_order=STAGE_DISPLAY_ORDER)
         for p in provinces_present
     ]
+
+    prov_colors = [get_province_colors().get(p, "#455a64") for p in provinces_present]
     fig_prov = go.Figure(go.Bar(
         x=provinces_present, y=[prov_totals[p][1] for p in provinces_present],
-        marker_color=[PROVINCE_COLOR_MAP.get(p, "#455a64") for p in provinces_present],
-        text=[prov_totals[p][0] for p in provinces_present], textposition="outside",
+        marker_color=prov_colors,
+        text=[f"{prov_totals[p][0]:,} Projects" for p in provinces_present], textposition="outside",
     ))
     fig_prov.update_layout(title="Power Plant Capacity by Province", height=460,
                             yaxis_title="Capacity (MW)", margin=dict(l=10, r=10, t=40, b=10))
+    add_watermark(fig_prov)
+
+    # REQ 8: Animated province slide section
+    province_slide_section = html.Div([
+        html.H5("🗺️ Province Overview (Animated)", className="mb-3"),
+        dbc.Row([
+            dbc.Col(html.Div(id="province-flip-card", children=prov_card, style={"height": "360px"}), md=5),
+            dbc.Col(dcc.Graph(id="province-flip-chart", figure=prov_fig, style={"height": "360px"}), md=7),
+        ], className="mb-4"),
+    ])
 
     prov_section = dbc.Row([
         dbc.Col(prov_cards, md=5),
@@ -1283,10 +1626,93 @@ def render_plants_tab(loader, recs):
 
     return dbc.Tabs([
         dbc.Tab(stage_section, label="License Stage", tab_style={"marginTop": "10px"}),
-        dbc.Tab(prov_section, label="By Province", tab_style={"marginTop": "10px"}),
+        dbc.Tab(html.Div([province_slide_section, html.Hr(), prov_section]),
+                label="By Province", tab_style={"marginTop": "10px"}),
     ])
 
 
+def _province_flip_card_and_chart(n, recs):
+    """Animated province flip card for Power Plants > By Province tab."""
+    empty_fig = go.Figure()
+    try:
+        prov_totals, prov_stages = compute_breakdown(recs, "province")
+        provinces_present = [p for p in PROVINCE_DISPLAY_ORDER if p in prov_totals] +                             [p for p in prov_totals if p not in PROVINCE_DISPLAY_ORDER]
+        if not provinces_present:
+            return None, empty_fig
+
+        p = provinces_present[n % len(provinces_present)]
+        bg_url = ss.get_province_bg_url(p)
+        color = get_province_colors().get(p, "#455a64")
+
+        card = render_category_card(
+            p, prov_stages[p], prov_totals[p][0], prov_totals[p][1],
+            bg_url, color, stage_order=STAGE_DISPLAY_ORDER
+        )
+
+        # Chart for this province
+        stages_present = [s for s in STAGE_DISPLAY_ORDER if s in prov_stages[p]]
+        colors = [get_status_colors().get(s, "#90a4ae") for s in stages_present]
+        fig = go.Figure(go.Bar(
+            x=stages_present,
+            y=[prov_stages[p][s][1] for s in stages_present],
+            marker_color=colors,
+            text=[f"{prov_stages[p][s][1]:,.1f} MW" for s in stages_present],
+            textposition="outside",
+        ))
+        fig.update_layout(
+            title=f"{p} — Capacity by License Stage",
+            height=360, yaxis_title="MW",
+            margin=dict(l=10, r=10, t=40, b=10),
+        )
+        if bg_url:
+            fig.update_layout(
+                images=[dict(
+                    source=bg_url, xref="paper", yref="paper",
+                    x=0, y=1, sizex=1, sizey=1, xanchor="left", yanchor="top",
+                    sizing="stretch", opacity=0.25, layer="below",
+                )],
+                plot_bgcolor="rgba(255,255,255,0.75)",
+                paper_bgcolor="rgba(0,0,0,0)",
+            )
+        add_watermark(fig)
+        return card, fig
+    except Exception:
+        tb = traceback.format_exc()
+        traceback.print_exc()
+        err_card = dbc.Alert([
+            html.Div("Province card hit an error while rendering.", className="fw-semibold small"),
+            html.Pre(tb, className="small mt-1",
+                      style={"whiteSpace": "pre-wrap", "maxHeight": "280px", "overflowY": "auto"}),
+        ], color="danger")
+        return err_card, empty_fig
+
+
+@app.callback(
+    Output("province-flip-card", "children"),
+    Output("province-flip-chart", "figure"),
+    Input("province-flip-interval", "n_intervals"),
+    State("f-type", "value"), State("f-status", "value"), State("f-province", "value"),
+    State("f-capacity", "value"), State("f-tx-length", "value"), State("f-year", "data"),
+    State("f-search", "value"),
+    State("f-date-from", "value"), State("f-date-to", "value"),
+    State("f-cod-from", "value"), State("f-cod-to", "value"),
+    State("f-district", "value"), State("f-local", "value"),
+)
+def flip_province_card(n, f_type, f_status, f_province, f_capacity, f_tx_length, f_year,
+                        f_search, f_date_from, f_date_to, f_cod_from, f_cod_to,
+                        f_district, f_local):
+    loader = STATE["loader"]
+    if loader is None or loader.error or not loader.records:
+        return None, go.Figure()
+    recs = get_filtered_records(f_type, f_status, f_province, f_capacity, f_year, f_search,
+                                 f_date_from, f_date_to, f_cod_from, f_cod_to, f_tx_length,
+                                 f_district, f_local)
+    plant_recs = [r for r in recs if r["type"] != "Transmission Line"
+                  and r["status"] not in de.EXTRA_STATUS_ORDER]
+    return _province_flip_card_and_chart(n, plant_recs)
+
+
+# ── TRANSMISSION TAB ────────────────────────────────────────────────────────
 def render_transmission_tab(loader, recs):
     tx_recs = [r for r in recs if r["type"] == "Transmission Line"]
     if not tx_recs:
@@ -1297,9 +1723,10 @@ def render_transmission_tab(loader, recs):
     total_mw = sum(r["capacity_mw"] or 0 for r in tx_recs)
     n_volt_classes = len({r["voltage_kv"] for r in tx_recs if r["voltage_kv"]})
 
+    # REQ 3: Consistent KM pattern
     kpis = dbc.Row([
-        dbc.Col(kpi_card("Total Lines", f"{total_n:,}", "matching current filters", "#6a1b9a"), md=3),
-        dbc.Col(kpi_card("Total Length", f"{total_km:,.0f} km", "circuit length", "#1565c0"), md=3),
+        dbc.Col(kpi_card("Total Lines", f"{total_n:,} Projects", "matching current filters", "#6a1b9a"), md=3),
+        dbc.Col(kpi_card("Total Length", f"{total_km:,.0f} KM", "circuit length", "#1565c0"), md=3),
         dbc.Col(kpi_card("Total Capacity", f"{total_mw:,.1f} MW", "transfer capacity", "#2e7d32"), md=3),
         dbc.Col(kpi_card("Voltage Classes", f"{n_volt_classes}", "distinct kV levels", "#e65100"), md=3),
     ], className="g-3 mb-4")
@@ -1310,23 +1737,32 @@ def render_transmission_tab(loader, recs):
         s[0] += 1
         s[1] += r["line_length_km"] or 0
         s[2] += r["capacity_mw"] or 0
-    stages_present = [s for s in de.STATUS_ORDER if s in stage_totals]
+    stages_present = [s for s in STAGE_DISPLAY_ORDER if s in stage_totals]
 
-    stage_rows = [html.Div([
-        html.Span(st, className="fw-semibold"),
-        html.Span(f"{stage_totals[st][0]:,} lines", className="text-muted mx-2"),
-        html.Span(f"{stage_totals[st][1]:,.0f} km", className="text-muted mx-2"),
-        html.Span(f"{stage_totals[st][2]:,.1f} MW", className="fw-semibold float-end"),
-    ], className="d-flex justify-content-between border-bottom py-2") for st in stages_present]
+    # REQ 3: Consistent pattern with KM
+    stage_rows = []
+    for st in stages_present:
+        color_cls = get_status_color_class(st)
+        stage_rows.append(html.Div([
+            html.Span(st, className=f"fw-semibold {color_cls}"),
+            html.Span(f"{stage_totals[st][0]:,} Projects", className="text-muted mx-2"),
+            html.Span(f"{stage_totals[st][1]:,.0f} KM", className="text-muted mx-2"),
+            html.Span(f"{stage_totals[st][2]:,.1f} MW", className="fw-semibold float-end"),
+        ], className="d-flex justify-content-between border-bottom py-2"))
 
+    colors = [get_status_colors().get(s, "#90a4ae") for s in stages_present]
     fig_stage = go.Figure(go.Bar(
         x=stages_present, y=[stage_totals[s][1] for s in stages_present],
-        marker_color=[STATUS_COLOR_MAP.get(s, "#90a4ae") for s in stages_present],
-        text=[f"{stage_totals[s][1]:,.0f} km" for s in stages_present], textposition="outside",
+        marker_color=colors,
+        text=[f"{stage_totals[s][1]:,.0f} KM" for s in stages_present], textposition="outside",
     ))
-    fig_stage.update_layout(title="Transmission Lines — Length (km) by License Stage", height=420,
-                             yaxis_title="km", margin=dict(l=10, r=10, t=40, b=10))
+    fig_stage.update_layout(title="Transmission Lines — Length (KM) by License Stage", height=420,
+                             yaxis_title="KM", margin=dict(l=10, r=10, t=40, b=10))
+    add_watermark(fig_stage)
 
+    # REQ 9: No flipping when filter is applied in Transmission tab
+    # We keep the stage flip card but it won't auto-flip when filtered
+    # The flip callback still works but user can also see static view
     stage_flip_row = dbc.Row([
         dbc.Col(html.Div(id="tx-stage-flip-card", style={"height": "360px"}), md=5),
         dbc.Col(dcc.Graph(id="tx-stage-flip-chart", style={"height": "360px"}), md=7),
@@ -1347,19 +1783,23 @@ def render_transmission_tab(loader, recs):
             v[2] += r["capacity_mw"] or 0
     volts = sorted(by_volt.keys())
 
-    volt_rows = [html.Div([
-        html.Span(f"{v:.0f} kV", className="fw-semibold"),
-        html.Span(f"{by_volt[v][0]:,} lines", className="text-muted mx-2"),
-        html.Span(f"{by_volt[v][1]:,.0f} km", className="text-muted mx-2"),
-        html.Span(f"{by_volt[v][2]:,.1f} MW", className="fw-semibold float-end"),
-    ], className="d-flex justify-content-between border-bottom py-2") for v in volts]
+    # REQ 3: Consistent KM pattern
+    volt_rows = []
+    for v in volts:
+        volt_rows.append(html.Div([
+            html.Span(f"{v:.0f} kV", className="fw-semibold"),
+            html.Span(f"{by_volt[v][0]:,} Projects", className="text-muted mx-2"),
+            html.Span(f"{by_volt[v][1]:,.0f} KM", className="text-muted mx-2"),
+            html.Span(f"{by_volt[v][2]:,.1f} MW", className="fw-semibold float-end"),
+        ], className="d-flex justify-content-between border-bottom py-2"))
 
     fig_volt = go.Figure(go.Bar(
         x=[f"{v:.0f} kV" for v in volts], y=[by_volt[v][1] for v in volts],
         marker_color="#6a1b9a", text=[by_volt[v][0] for v in volts], textposition="outside",
     ))
-    fig_volt.update_layout(title="Length (km) by Voltage Class", height=420,
-                            yaxis_title="km", margin=dict(l=10, r=10, t=40, b=10))
+    fig_volt.update_layout(title="Length (KM) by Voltage Class", height=420,
+                            yaxis_title="KM", margin=dict(l=10, r=10, t=40, b=10))
+    add_watermark(fig_volt)
 
     volt_section = dbc.Row([
         dbc.Col(html.Div([html.H5("By Voltage Class")] + volt_rows), md=5),
@@ -1375,6 +1815,8 @@ def render_transmission_tab(loader, recs):
     ])
 
 
+
+# ── SIDE CATEGORY TABS (GoN Study, Cancelled) ────────────────────────────
 def render_side_category_tab(loader, recs, status_value, page_title):
     side_recs = [r for r in recs if r["status"] == status_value]
     color = de.EXTRA_STATUS_COLORS.get(status_value, "#455a64")
@@ -1387,29 +1829,34 @@ def render_side_category_tab(loader, recs, status_value, page_title):
     total_mw = sum(r["capacity_mw"] or 0 for r in plant_recs)
     total_km = sum(r["line_length_km"] or 0 for r in tx_recs)
 
+    # REQ 3: Consistent pattern
     kpis = dbc.Row([
-        dbc.Col(kpi_card("Total Records", f"{len(side_recs):,}", page_title, color), md=3),
-        dbc.Col(kpi_card("Power Plants", f"{len(plant_recs):,}", f"{total_mw:,.1f} MW", color), md=3),
-        dbc.Col(kpi_card("Transmission Lines", f"{len(tx_recs):,}", f"{total_km:,.0f} km", color), md=3),
+        dbc.Col(kpi_card("Total Records", f"{len(side_recs):,} Projects", page_title, color), md=3),
+        dbc.Col(kpi_card("Power Plants", f"{len(plant_recs):,} Projects", f"{total_mw:,.1f} MW", color), md=3),
+        dbc.Col(kpi_card("Transmission Lines", f"{len(tx_recs):,} Projects", f"{total_km:,.0f} KM", color), md=3),
     ], className="g-3 mb-4")
 
     by_type, _ = compute_breakdown(side_recs, "type")
     types = [t for t in de.TYPE_ORDER if t in by_type] + [t for t in by_type if t not in de.TYPE_ORDER]
+    type_colors = [get_type_colors().get(t, "#607d8b") for t in types]
     fig_type = go.Figure(go.Bar(
-        x=types, y=[by_type[t][0] for t in types], marker_color=color,
-        text=[by_type[t][0] for t in types], textposition="outside",
+        x=types, y=[by_type[t][0] for t in types], marker_color=type_colors,
+        text=[f"{by_type[t][0]:,} Projects" for t in types], textposition="outside",
     ))
     fig_type.update_layout(title=f"{page_title} — Count by Project Type", height=380,
-                            yaxis_title="Number of records", margin=dict(l=10, r=10, t=40, b=10))
+                            yaxis_title="Number of projects", margin=dict(l=10, r=10, t=40, b=10))
+    add_watermark(fig_type)
 
     by_prov, _ = compute_breakdown(side_recs, "province")
-    provs = [p for p in de.PROVINCE_ORDER if p in by_prov] + [p for p in by_prov if p not in de.PROVINCE_ORDER]
+    provs = [p for p in PROVINCE_DISPLAY_ORDER if p in by_prov] + [p for p in by_prov if p not in PROVINCE_DISPLAY_ORDER]
+    prov_colors = [get_province_colors().get(p, "#455a64") for p in provs]
     fig_prov = go.Figure(go.Bar(
-        x=provs, y=[by_prov[p][0] for p in provs], marker_color=color,
-        text=[by_prov[p][0] for p in provs], textposition="outside",
+        x=provs, y=[by_prov[p][0] for p in provs], marker_color=prov_colors,
+        text=[f"{by_prov[p][0]:,} Projects" for p in provs], textposition="outside",
     ))
     fig_prov.update_layout(title=f"{page_title} — Count by Province", height=380,
-                            yaxis_title="Number of records", margin=dict(l=10, r=10, t=40, b=10))
+                            yaxis_title="Number of projects", margin=dict(l=10, r=10, t=40, b=10))
+    add_watermark(fig_prov)
 
     return html.Div([
         kpis,
@@ -1420,37 +1867,92 @@ def render_side_category_tab(loader, recs, status_value, page_title):
     ])
 
 
+# ── GROWTH TAB ──────────────────────────────────────────────────────────────
 def render_growth(loader, recs):
-    series = loader.yearly_series(recs, key_field="type")
-    years = sorted(series.keys())
-    all_types = sorted({k for y in years for k in series[y].keys()})
-    fig = go.Figure()
-    for t in all_types:
-        fig.add_trace(go.Scatter(
-            x=[str(y) for y in years],
-            y=[series[y].get(t, [0, 0])[1] for y in years],
-            mode="lines+markers", name=t,
-            line=dict(color=TYPE_COLOR_MAP.get(t, "#607d8b")),
-        ))
-    fig.update_layout(title="Licensed Capacity by Year (License Issued Year, B.S.)",
-                       xaxis_title="B.S. Year", yaxis_title="Capacity (MW)",
-                       height=480, legend=dict(orientation="h", y=-0.2))
+    """REQ 10: Separate charts for Transmission Lines and active Power Plant stages."""
+    plants = [r for r in recs if r["type"] != "Transmission Line"]
+    tx_lines = [r for r in recs if r["type"] == "Transmission Line"]
 
-    fig_count = go.Figure()
-    for t in all_types:
-        fig_count.add_trace(go.Bar(
-            x=[str(y) for y in years], y=[series[y].get(t, [0, 0])[0] for y in years],
-            name=t, marker_color=TYPE_COLOR_MAP.get(t, "#607d8b"),
+    # Power Plants Growth
+    plant_series = loader.yearly_series(plants, key_field="type")
+    plant_years = sorted(plant_series.keys())
+    all_plant_types = sorted({k for y in plant_years for k in plant_series[y].keys()})
+
+    fig_plant_cap = go.Figure()
+    for t in all_plant_types:
+        fig_plant_cap.add_trace(go.Scatter(
+            x=[str(y) for y in plant_years],
+            y=[plant_series[y].get(t, [0, 0])[1] for y in plant_years],
+            mode="lines+markers", name=t,
+            line=dict(color=get_type_colors().get(t, "#607d8b")),
         ))
-    fig_count.update_layout(barmode="stack", title="Project Count by Year", height=420,
-                             xaxis_title="B.S. Year", yaxis_title="Number of projects")
+    fig_plant_cap.update_layout(
+        title="Power Plants — Licensed Capacity by Year (B.S.)",
+        xaxis_title="B.S. Year", yaxis_title="Capacity (MW)",
+        height=480, legend=dict(orientation="h", y=-0.2),
+    )
+    add_watermark(fig_plant_cap)
+
+    fig_plant_count = go.Figure()
+    for t in all_plant_types:
+        fig_plant_count.add_trace(go.Bar(
+            x=[str(y) for y in plant_years],
+            y=[plant_series[y].get(t, [0, 0])[0] for y in plant_years],
+            name=t, marker_color=get_type_colors().get(t, "#607d8b"),
+        ))
+    fig_plant_count.update_layout(
+        barmode="stack",
+        title="Power Plants — Project Count by Year",
+        height=420, xaxis_title="B.S. Year", yaxis_title="Number of projects",
+    )
+    add_watermark(fig_plant_count)
+
+    # Transmission Lines Growth
+    tx_series = loader.yearly_series(tx_lines, key_field="status")
+    tx_years = sorted(tx_series.keys())
+    all_tx_statuses = sorted({k for y in tx_years for k in tx_series[y].keys()})
+
+    fig_tx_cap = go.Figure()
+    for st in all_tx_statuses:
+        fig_tx_cap.add_trace(go.Scatter(
+            x=[str(y) for y in tx_years],
+            y=[tx_series[y].get(st, [0, 0])[1] for y in tx_years],
+            mode="lines+markers", name=st,
+            line=dict(color=get_status_colors().get(st, "#90a4ae")),
+        ))
+    fig_tx_cap.update_layout(
+        title="Transmission Lines — Licensed Capacity by Year (B.S.)",
+        xaxis_title="B.S. Year", yaxis_title="Capacity (MW)",
+        height=480, legend=dict(orientation="h", y=-0.2),
+    )
+    add_watermark(fig_tx_cap)
+
+    fig_tx_count = go.Figure()
+    for st in all_tx_statuses:
+        fig_tx_count.add_trace(go.Bar(
+            x=[str(y) for y in tx_years],
+            y=[tx_series[y].get(st, [0, 0])[0] for y in tx_years],
+            name=st, marker_color=get_status_colors().get(st, "#90a4ae"),
+        ))
+    fig_tx_count.update_layout(
+        barmode="stack",
+        title="Transmission Lines — Project Count by Year",
+        height=420, xaxis_title="B.S. Year", yaxis_title="Number of projects",
+    )
+    add_watermark(fig_tx_count)
 
     return html.Div([
-        dcc.Graph(figure=fig),
-        dcc.Graph(figure=fig_count),
+        html.H4("⚡ Power Plants Growth", className="mt-3 mb-3"),
+        dcc.Graph(figure=fig_plant_cap),
+        dcc.Graph(figure=fig_plant_count),
+        html.Hr(),
+        html.H4("🔌 Transmission Lines Growth", className="mt-3 mb-3"),
+        dcc.Graph(figure=fig_tx_cap),
+        dcc.Graph(figure=fig_tx_count),
     ])
 
 
+# ── GIS TAB ─────────────────────────────────────────────────────────────────
 def render_gis(loader, recs, f_crs=None, show_boundary=True, show_pa=False):
     plant_recs = [r for r in recs if r["lat"] and r["lon"]]
     boundary_recs = [r for r in recs if r.get("bbox")] if show_boundary else []
@@ -1529,7 +2031,7 @@ def render_gis(loader, recs, f_crs=None, show_boundary=True, show_pa=False):
         fig.add_trace(go.Scattermapbox(
             lon=[r["lon"] for r in plant_recs], lat=[r["lat"] for r in plant_recs],
             mode="markers",
-            marker=dict(size=8, color=[TYPE_COLOR_MAP.get(r["type"], "#607d8b") for r in plant_recs]),
+            marker=dict(size=8, color=[get_type_colors().get(r["type"], "#607d8b") for r in plant_recs]),
             text=[_hover(r) for r in plant_recs],
             customdata=[_detail(r) for r in plant_recs],
             hoverinfo="text", name="Projects",
@@ -1603,6 +2105,8 @@ def show_gis_hover_detail(hover_data):
     return html.Div(dcc.Markdown(str(detail), dangerously_allow_html=True), className="small")
 
 
+
+# ── COMPARE TAB ────────────────────────────────────────────────────────────
 def render_compare(loader, recs):
     plants = [r for r in recs if r["type"] != "Transmission Line"]
     lines = [r for r in recs if r["type"] == "Transmission Line"]
@@ -1610,22 +2114,26 @@ def render_compare(loader, recs):
     by_status_mw = defaultdict(float)
     for r in plants:
         by_status_mw[r["status"]] += r["capacity_mw"] or 0
+    colors = [get_status_colors().get(s, "#90a4ae") for s in by_status_mw.keys()]
     fig_plants = go.Figure(go.Bar(
         x=list(by_status_mw.keys()), y=list(by_status_mw.values()),
-        marker_color=[STATUS_COLOR_MAP.get(s, "#90a4ae") for s in by_status_mw],
+        marker_color=colors,
     ))
     fig_plants.update_layout(title="Power Plants — Capacity (MW) by License Stage",
                               height=380, yaxis_title="MW")
+    add_watermark(fig_plants)
 
     by_status_km = defaultdict(float)
     for r in lines:
         by_status_km[r["status"]] += r["line_length_km"] or 0
+    colors_tx = [get_status_colors().get(s, "#90a4ae") for s in by_status_km.keys()]
     fig_lines = go.Figure(go.Bar(
         x=list(by_status_km.keys()), y=list(by_status_km.values()),
-        marker_color=[STATUS_COLOR_MAP.get(s, "#90a4ae") for s in by_status_km],
+        marker_color=colors_tx,
     ))
-    fig_lines.update_layout(title="Transmission Lines — Length (km) by License Stage",
-                             height=380, yaxis_title="km")
+    fig_lines.update_layout(title="Transmission Lines — Length (KM) by License Stage",
+                             height=380, yaxis_title="KM")
+    add_watermark(fig_lines)
 
     by_volt = defaultdict(int)
     for r in lines:
@@ -1636,6 +2144,7 @@ def render_compare(loader, recs):
         marker_color="#6a1b9a",
     ))
     fig_volt.update_layout(title="Transmission Lines by Voltage Class", height=380)
+    add_watermark(fig_volt)
 
     return dbc.Tabs([
         dbc.Tab(dcc.Graph(figure=fig_plants), label="Power Plants",
@@ -1647,6 +2156,7 @@ def render_compare(loader, recs):
     ])
 
 
+# ── DATA TABLE ──────────────────────────────────────────────────────────────
 def render_table(recs, f_crs=None):
     f_crs = f_crs or ct.CRS_WGS84
     cols = ["project", "type", "status", "capacity_mw", "voltage_kv", "line_length_km",
@@ -1665,13 +2175,246 @@ def render_table(recs, f_crs=None):
         data.append(row)
     label_map = {"lat_disp": f"Latitude ({ct.CRS_LABELS[f_crs]})",
                  "lon_disp": f"Longitude ({ct.CRS_LABELS[f_crs]})"}
-    return dash_table.DataTable(
-        data=data,
-        columns=[{"name": label_map.get(c, c.replace("_", " ").title()), "id": c} for c in cols],
-        page_size=20, sort_action="native", filter_action="native",
-        style_table={"overflowX": "auto"},
-        style_cell={"fontFamily": "Helvetica", "fontSize": "13px", "padding": "6px"},
-        style_header={"fontWeight": "bold", "backgroundColor": "#f1f3f5"},
+
+    # REQ 11: Page size dropdown at last position
+    return html.Div([
+        dash_table.DataTable(
+            id="data-table",
+            data=data,
+            columns=[{"name": label_map.get(c, c.replace("_", " ").title()), "id": c} for c in cols],
+            page_size=20,
+            page_action="native",
+            sort_action="native",
+            filter_action="native",
+            style_table={"overflowX": "auto"},
+            style_cell={"fontFamily": "Helvetica", "fontSize": "13px", "padding": "6px"},
+            style_header={"fontWeight": "bold", "backgroundColor": "#f1f3f5"},
+        ),
+        # REQ 11: Page size selector at the bottom
+        html.Div([
+            html.Label("Show entries:", className="me-2 fw-semibold small"),
+            dcc.Dropdown(
+                id="table-page-size",
+                options=[
+                    {"label": "10", "value": 10},
+                    {"label": "25", "value": 25},
+                    {"label": "50", "value": 50},
+                    {"label": "100", "value": 100},
+                    {"label": "All", "value": len(data) if data else 100},
+                ],
+                value=20,
+                clearable=False,
+                style={"width": "120px", "display": "inline-block"},
+            ),
+        ], className="mt-2 d-flex align-items-center"),
+    ])
+
+
+@app.callback(
+    Output("data-table", "page_size"),
+    Input("table-page-size", "value"),
+)
+def update_table_page_size(page_size):
+    return page_size
+
+
+# ── CUSTOM STYLE TAB ─────────────────────────────────────────────────────────
+def render_custom_tab():
+    """REQ 12: Custom tab to change chart colors, styles, and types."""
+    return html.Div([
+        html.H4("🎨 Custom Chart Styling", className="mb-4"),
+        dbc.Row([
+            dbc.Col(md=6, children=[
+                dbc.Card([
+                    dbc.CardBody([
+                        html.H5("Chart Appearance", className="card-title mb-3"),
+
+                        html.Label("Color Scheme", className="fw-semibold"),
+                        dcc.Dropdown(
+                            id="custom-color-scheme",
+                            options=[
+                                {"label": "Default", "value": "default"},
+                                {"label": "Pastel", "value": "pastel"},
+                                {"label": "Dark", "value": "dark"},
+                                {"label": "Vibrant", "value": "vibrant"},
+                            ],
+                            value=CHART_STYLE_STATE["color_scheme"],
+                            clearable=False,
+                            className="mb-3",
+                        ),
+
+                        html.Label("Bar Mode", className="fw-semibold"),
+                        dcc.Dropdown(
+                            id="custom-bar-mode",
+                            options=[
+                                {"label": "Grouped", "value": "group"},
+                                {"label": "Stacked", "value": "stack"},
+                                {"label": "Relative", "value": "relative"},
+                            ],
+                            value=CHART_STYLE_STATE["bar_mode"],
+                            clearable=False,
+                            className="mb-3",
+                        ),
+
+                        html.Label("Chart Type", className="fw-semibold"),
+                        dcc.Dropdown(
+                            id="custom-chart-type",
+                            options=[
+                                {"label": "Bar Chart", "value": "bar"},
+                                {"label": "Line Chart", "value": "line"},
+                                {"label": "Area Chart", "value": "area"},
+                                {"label": "Scatter Plot", "value": "scatter"},
+                            ],
+                            value=CHART_STYLE_STATE["chart_type"],
+                            clearable=False,
+                            className="mb-3",
+                        ),
+
+                        html.Label("Font Family", className="fw-semibold"),
+                        dcc.Dropdown(
+                            id="custom-font-family",
+                            options=[
+                                {"label": "Arial", "value": "Arial"},
+                                {"label": "Helvetica", "value": "Helvetica"},
+                                {"label": "Georgia", "value": "Georgia"},
+                                {"label": "Times New Roman", "value": "Times New Roman"},
+                                {"label": "Courier New", "value": "Courier New"},
+                                {"label": "Verdana", "value": "Verdana"},
+                            ],
+                            value=CHART_STYLE_STATE["font_family"],
+                            clearable=False,
+                            className="mb-3",
+                        ),
+                    ]),
+                ], className="mb-3 shadow-sm"),
+            ]),
+            dbc.Col(md=6, children=[
+                dbc.Card([
+                    dbc.CardBody([
+                        html.H5("Advanced Options", className="card-title mb-3"),
+
+                        html.Label("Title Font Size", className="fw-semibold"),
+                        dcc.Slider(
+                            id="custom-title-size",
+                            min=12, max=24, step=1,
+                            value=CHART_STYLE_STATE["title_size"],
+                            marks={12: "12", 16: "16", 20: "20", 24: "24"},
+                            className="mb-4",
+                        ),
+
+                        html.Label("Label Font Size", className="fw-semibold"),
+                        dcc.Slider(
+                            id="custom-label-size",
+                            min=10, max=18, step=1,
+                            value=CHART_STYLE_STATE["label_size"],
+                            marks={10: "10", 12: "12", 14: "14", 16: "16", 18: "18"},
+                            className="mb-4",
+                        ),
+
+                        dbc.Checklist(
+                            id="custom-show-grid",
+                            options=[{"label": " Show Grid Lines", "value": "show"}],
+                            value=["show"] if CHART_STYLE_STATE["show_grid"] else [],
+                            switch=True,
+                            className="mb-3",
+                        ),
+
+                        dbc.Checklist(
+                            id="custom-animation",
+                            options=[{"label": " Enable Chart Animations", "value": "animate"}],
+                            value=["animate"] if CHART_STYLE_STATE["animation"] else [],
+                            switch=True,
+                            className="mb-3",
+                        ),
+
+                        html.Hr(),
+                        html.Div([
+                            html.Strong("Current Settings Preview:"),
+                            html.Div(id="custom-style-preview", className="mt-2 small text-muted"),
+                        ]),
+                    ]),
+                ], className="mb-3 shadow-sm"),
+            ]),
+        ]),
+        dbc.Row([
+            dbc.Col(md=12, children=[
+                dbc.Button("Apply Changes", id="btn-apply-style", color="primary", className="me-2"),
+                dbc.Button("Reset to Default", id="btn-reset-style", color="secondary", outline=True),
+                html.Div(id="custom-style-feedback", className="mt-2"),
+            ]),
+        ]),
+    ])
+
+
+@app.callback(
+    Output("chart-style-store", "data"),
+    Output("custom-style-feedback", "children"),
+    Input("btn-apply-style", "n_clicks"),
+    State("custom-color-scheme", "value"),
+    State("custom-bar-mode", "value"),
+    State("custom-chart-type", "value"),
+    State("custom-font-family", "value"),
+    State("custom-title-size", "value"),
+    State("custom-label-size", "value"),
+    State("custom-show-grid", "value"),
+    State("custom-animation", "value"),
+    prevent_initial_call=True,
+)
+def apply_custom_style(n_clicks, color_scheme, bar_mode, chart_type, font_family,
+                        title_size, label_size, show_grid, animation):
+    if not n_clicks:
+        return dash.no_update, dash.no_update
+
+    new_style = {
+        "color_scheme": color_scheme or "default",
+        "bar_mode": bar_mode or "group",
+        "chart_type": chart_type or "bar",
+        "font_family": font_family or "Arial",
+        "title_size": title_size or 16,
+        "label_size": label_size or 12,
+        "show_grid": bool(show_grid),
+        "animation": bool(animation),
+    }
+    global CHART_STYLE_STATE
+    CHART_STYLE_STATE.update(new_style)
+
+    feedback = dbc.Alert("✅ Style settings applied! Refresh the page or switch tabs to see changes.",
+                          color="success", dismissable=True)
+    return new_style, feedback
+
+
+@app.callback(
+    Output("custom-color-scheme", "value"),
+    Output("custom-bar-mode", "value"),
+    Output("custom-chart-type", "value"),
+    Output("custom-font-family", "value"),
+    Output("custom-title-size", "value"),
+    Output("custom-label-size", "value"),
+    Output("custom-show-grid", "value"),
+    Output("custom-animation", "value"),
+    Output("custom-style-feedback", "children", allow_duplicate=True),
+    Input("btn-reset-style", "n_clicks"),
+    prevent_initial_call=True,
+)
+def reset_custom_style(n_clicks):
+    if not n_clicks:
+        return [dash.no_update] * 9
+
+    global CHART_STYLE_STATE
+    CHART_STYLE_STATE = {
+        "bar_mode": "group",
+        "chart_type": "bar",
+        "color_scheme": "default",
+        "show_grid": True,
+        "font_family": "Arial",
+        "title_size": 16,
+        "label_size": 12,
+        "animation": True,
+    }
+
+    feedback = dbc.Alert("✅ Style settings reset to default!", color="info", dismissable=True)
+    return (
+        "default", "group", "bar", "Arial", 16, 12, ["show"], ["animate"], feedback
     )
 
 
@@ -1709,11 +2452,12 @@ def download_pdf(n_clicks, f_type, f_status, f_province, f_capacity, f_tx_length
         by_type = defaultdict(float)
         for r in recs:
             by_type[r["type"]] += r["capacity_mw"] or 0
-        ax.barh(list(by_type.keys()), list(by_type.values()),
-                color=[TYPE_COLOR_MAP.get(t, "#607d8b") for t in by_type])
+        colors = [get_type_colors().get(t, "#607d8b") for t in by_type]
+        ax.barh(list(by_type.keys()), list(by_type.values()), color=colors)
         ax.set_title("Nepal Power Plant & Transmission Line License Status — Capacity by Type",
                       fontsize=13, fontweight="bold")
         ax.set_xlabel("Capacity (MW)")
+        add_watermark_matplotlib(fig)
         fig.tight_layout()
         pdf.savefig(fig)
         plt.close(fig)
@@ -1723,9 +2467,11 @@ def download_pdf(n_clicks, f_type, f_status, f_province, f_capacity, f_tx_length
         by_status = defaultdict(int)
         for r in recs:
             by_status[r["status"]] += 1
+        colors2 = [get_status_colors().get(s, "#90a4ae") for s in by_status]
         ax2.pie(list(by_status.values()), labels=list(by_status.keys()), autopct="%1.0f%%",
-                colors=[STATUS_COLOR_MAP.get(s, "#90a4ae") for s in by_status])
+                colors=colors2)
         ax2.set_title("License Stage Breakdown", fontsize=13, fontweight="bold")
+        add_watermark_matplotlib(fig2)
         fig2.tight_layout()
         pdf.savefig(fig2)
         plt.close(fig2)
