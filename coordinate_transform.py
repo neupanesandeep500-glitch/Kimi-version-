@@ -47,3 +47,17 @@ def everest_to_wgs84(lat, lon):
     lat_w = lat + 0.000025
     lon_w = lon + 0.000035
     return lat_w, lon_w
+
+
+def decimal_to_dms(value):
+    """Format a decimal-degree value as DDD°MM'SS.SS" (as used throughout
+    the DoED workbook). Returns None for a missing value."""
+    if value is None:
+        return None
+    sign = "-" if value < 0 else ""
+    value = abs(value)
+    deg = int(value)
+    minutes_full = (value - deg) * 60
+    minutes = int(minutes_full)
+    seconds = (minutes_full - minutes) * 60
+    return f"{sign}{deg}\u00b0{minutes:02d}'{seconds:05.2f}\""
