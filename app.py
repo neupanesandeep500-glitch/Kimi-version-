@@ -45,6 +45,7 @@ import plotly.io as pio
 import data_engine as de
 import server_state as ss
 import coordinate_transform as ct
+import gis_leaflet_map
 from admin import admin_bp
 
 # ── GLOBAL CHART STYLE STATE (for Custom Tab) ───────────────────────────────
@@ -1953,15 +1954,12 @@ def render_growth(loader, recs):
 
 
 # ── GIS TAB ─────────────────────────────────────────────────────────────────
-def render_gis(loader, recs, f_crs=None, show_boundary=True, show_pa=False):
-    plant_recs = [r for r in recs if r["lat"] and r["lon"]]
-    boundary_recs = [r for r in recs if r.get("bbox")] if show_boundary else []
-
+def render_gis_tab(loader, recs, f_crs, show_boundary=True, show_pa=False):
     gis_loaded = getattr(de.GIS, 'loaded', False)
-    pa_loaded = getattr(de.GIS, 'pa_loaded', False)
+    plant_recs = [r for r in recs if r["lat"] and r["lon"]]
 
-    if not gis_loaded and not plant_recs and not boundary_recs:
-        return dbc.Alert(
+    if not gis_loaded and not plant_recs:
+        map_view = dbc.Alert(
             "No map data available yet — neither the district/province "
             "boundary package nor any licensed-project coordinates have "
             "been loaded. An administrator can add these at /admin (sync "
@@ -1969,115 +1967,34 @@ def render_gis(loader, recs, f_crs=None, show_boundary=True, show_pa=False):
             "DEFAULT_GIS_DRIVE_URL on the server).",
             color="info",
         )
-
-    fig = go.Figure()
-
-    if gis_loaded:
-        dist_metric = loader.district_metric(recs)
-        values = [v[1] for v in dist_metric.values()]
-        vmax = max(values) if values else 1
-        for name, prov, rings in de.GIS.display_rings(level="district"):
-            cnt, mw = dist_metric.get(name, [0, 0.0])
-            intensity = min(mw / vmax, 1.0) if vmax else 0
-            color = f"rgba(21,101,192,{0.15 + 0.65 * intensity:.2f})"
-            for ring in rings:
-                lons = [pt[0] for pt in ring]
-                lats = [pt[1] for pt in ring]
-                fig.add_trace(go.Scattermapbox(
-                    lon=lons, lat=lats, mode="lines", fill="toself",
-                    fillcolor=color, line=dict(width=1, color="#37474f"),
-                    hoverinfo="text", text=f"{name} ({prov})<br>{cnt} projects · {mw:.1f} MW",
-                    showlegend=False,
-                ))
-
-    if show_pa and pa_loaded:
-        for name, category, rings in de.GIS.pa_display_rings():
-            for ring in rings:
-                lons = [pt[0] for pt in ring]
-                lats = [pt[1] for pt in ring]
-                fig.add_trace(go.Scattermapbox(
-                    lon=lons, lat=lats, mode="lines", fill="toself",
-                    fillcolor="rgba(46,125,50,0.28)", line=dict(width=1.5, color="#1b5e20"),
-                    hoverinfo="text",
-                    text=f"Protected area: {name}" + (f" ({category})" if category else ""),
-                    showlegend=False,
-                ))
-
-    for r in boundary_recs:
-        la1, la2, lo1, lo2 = r["bbox"]
-        lons = [lo1, lo2, lo2, lo1, lo1]
-        lats = [la1, la1, la2, la2, la1]
-        detail = de.full_rec_tip(r).replace(chr(10), "<br>")
-        fig.add_trace(go.Scattermapbox(
-            lon=lons, lat=lats, mode="lines", fill="toself",
-            fillcolor="rgba(230,81,0,0.18)", line=dict(width=1.5, color="#e65100"),
-            hoverinfo="text", text=detail,
-            customdata=[detail] * len(lons),
-            name="License boundary", showlegend=False,
-        ))
-
-    if plant_recs:
-        def _hover(r):
-            lat, lon = r["lat"], r["lon"]
-            if f_crs == ct.CRS_EVEREST:
-                lat, lon = ct.wgs84_to_everest(lat, lon)
-            base = (f"{r['project']}<br>{r['type']} · {r['capacity_mw'] or 0:.1f} MW"
-                    f"<br>{lat:.5f}, {lon:.5f} ({ct.CRS_LABELS.get(f_crs or ct.CRS_WGS84)})")
-            return base
-
-        def _detail(r):
-            return de.full_rec_tip(r).replace(chr(10), "<br>")
-
-        fig.add_trace(go.Scattermapbox(
-            lon=[r["lon"] for r in plant_recs], lat=[r["lat"] for r in plant_recs],
-            mode="markers",
-            marker=dict(size=8, color=[get_type_colors().get(r["type"], "#607d8b") for r in plant_recs]),
-            text=[_hover(r) for r in plant_recs],
-            customdata=[_detail(r) for r in plant_recs],
-            hoverinfo="text", name="Projects",
-        ))
-
-    fig.update_layout(
-        mapbox=dict(style="carto-positron", center=dict(lat=28.3, lon=84.1), zoom=5.6),
-        height=650, margin=dict(l=0, r=0, t=0, b=0),
-    )
-    graph = dcc.Graph(id="gis-map", figure=fig, config={"scrollZoom": True})
-
-    if not gis_loaded:
-        return html.Div([
-            dbc.Alert(
-                "District/province boundary shading isn't loaded yet — "
-                "showing project locations only. An administrator can add "
-                "the GIS package at /admin.",
-                color="warning", className="mb-2", dismissable=True,
+    else:
+        html_str = gis_leaflet_map.build_gis_map_html(
+            recs, get_status_colors(), get_type_colors(), get_province_colors(),
+        )
+        iframe = html.Iframe(
+            srcDoc=html_str,
+            style={"width": "100%", "height": "690px", "border": "none", "borderRadius": "6px"},
+        )
+        map_view = html.Div([
+            iframe,
+            html.Div(
+                "Filter by license stage, project type, province, or search by name/promoter/"
+                "district/local body directly in the map's own sidebar. Toggle district/local-body/"
+                "protected-area/claimed-area layers on and off, and switch the emphasized coordinate "
+                "system (WGS-84 vs. Everest 1830) from the sidebar as well.",
+                className="text-muted small mt-1",
             ),
-            graph,
         ])
-    return graph
-
-
-def render_gis_tab(loader, recs, f_crs, show_boundary=True, show_pa=False):
-    map_view = dbc.Row([
-        dbc.Col(md=8, children=[
-            html.Div(id="gis-controls-wrapper"),
-            render_gis(loader, recs, f_crs, show_boundary=show_boundary, show_pa=show_pa),
-            html.Div("Scroll the mouse wheel over the map to zoom in/out.",
-                      className="text-muted small mt-1"),
-        ]),
-        dbc.Col(md=4, children=[
-            dbc.Card(dbc.CardBody([
-                html.H6([html.I(className="bi bi-geo-alt me-2"), "Project Details"],
-                         className="mb-2"),
-                html.Div(
-                    id="gis-detail-panel",
-                    children=dbc.Alert(
-                        "Hover over a project marker or license boundary on the "
-                        "map to see its full details here.", color="light",
-                    ),
+        if not gis_loaded:
+            map_view = html.Div([
+                dbc.Alert(
+                    "District/province boundary shading isn't loaded yet — "
+                    "showing project locations only. An administrator can add "
+                    "the GIS package at /admin.",
+                    color="warning", className="mb-2", dismissable=True,
                 ),
-            ]), className="shadow-sm", style={"maxHeight": "690px", "overflowY": "auto"}),
-        ]),
-    ])
+                map_view,
+            ])
 
     pa_names = de.GIS.pa_names() if getattr(de.GIS, 'pa_loaded', False) else []
     pa_view = (dbc.ListGroup([dbc.ListGroupItem(n) for n in pa_names])
@@ -2088,21 +2005,6 @@ def render_gis_tab(loader, recs, f_crs, show_boundary=True, show_pa=False):
         dbc.Tab(map_view, label="Map"),
         dbc.Tab(pa_view, label="Protected Areas List"),
     ])
-
-
-@app.callback(
-    Output("gis-detail-panel", "children"),
-    Input("gis-map", "hoverData"),
-    prevent_initial_call=True,
-)
-def show_gis_hover_detail(hover_data):
-    if not hover_data or not hover_data.get("points"):
-        return dash.no_update
-    pt = hover_data["points"][0]
-    detail = pt.get("customdata")
-    if not detail:
-        return dbc.Alert("No additional details for this map feature.", color="light")
-    return html.Div(dcc.Markdown(str(detail), dangerously_allow_html=True), className="small")
 
 
 
