@@ -95,10 +95,19 @@ def ensure_gis_loaded(force=False):
         return
 
     try:
-        # ── Load districts from bundled data (ALWAYS works) ──
-        from gis_bundled import NEPAL_DISTRICTS_GEOJSON
+        # ── Load districts, provinces, and local bodies from bundled data
+        # (ALWAYS works). Loading districts alone left provinces_loaded/
+        # localbodies_loaded False, so every point-in-polygon lookup other
+        # than the single placeholder district fell back to "Unspecified".
+        from gis_bundled import (NEPAL_DISTRICTS_GEOJSON, NEPAL_PROVINCES_GEOJSON,
+                                  NEPAL_LOCALBODIES_GEOJSON, NEPAL_BOUNDARY_GEOJSON,
+                                  NEPAL_CLAIMED_AREA_GEOJSON)
         candidate = copy.copy(de.GIS)
         ok = candidate.load_from_geojson(NEPAL_DISTRICTS_GEOJSON)
+        candidate.load_provinces_from_geojson(NEPAL_PROVINCES_GEOJSON)
+        candidate.load_localbodies_from_geojson(NEPAL_LOCALBODIES_GEOJSON)
+        candidate.load_boundary_from_geojson(NEPAL_BOUNDARY_GEOJSON)
+        candidate.load_claimed_area_from_geojson(NEPAL_CLAIMED_AREA_GEOJSON)
         if ok:
             de.GIS = candidate
             STATE["gis_loaded"] = True
