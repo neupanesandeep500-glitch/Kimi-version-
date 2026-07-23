@@ -23,18 +23,23 @@ import json
 import os
 
 _GIS_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "gis")
+_GIS_DATA_DIR_ROOT = os.path.dirname(os.path.abspath(__file__))
 _EMPTY_FC = {"type": "FeatureCollection", "features": []}
 
 
 def _load_geojson_file(filename, fallback):
     """Read a bundled GeoJSON asset; fall back gracefully (rather than
-    crashing the whole app) if the file is missing from this deploy."""
-    path = os.path.join(_GIS_DATA_DIR, filename)
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return fallback
+    crashing the whole app) if the file is missing from this deploy.
+    Checks data/gis/<filename> first (preferred layout), then the repo
+    root (where these assets currently actually live in this repo)."""
+    for candidate_dir in (_GIS_DATA_DIR, _GIS_DATA_DIR_ROOT):
+        path = os.path.join(candidate_dir, filename)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            continue
+    return fallback
 
 
 # Real geometry, simplified from the Survey Department shapefile:
