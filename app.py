@@ -1183,22 +1183,43 @@ def add_watermark_matplotlib(fig):
 
 
 # ── CATEGORY CARD WITH COMMON BACKGROUND ────────────────────────────────────
+def flip_frame_style(bg_url):
+    """Style for the single shared background frame that wraps a flip
+    card + its chart. Used consistently everywhere a category (type,
+    province, stage) flips through a card-plus-chart pair, so the
+    background photo appears exactly once — behind both — instead of
+    being applied separately to the card header and the chart panel."""
+    style = {
+        "borderRadius": "12px", "padding": "16px", "position": "relative",
+    }
+    if bg_url:
+        style.update({
+            "backgroundImage": f'linear-gradient(rgba(246,247,249,0.60), rgba(246,247,249,0.60)), url("{bg_url}")',
+            "backgroundSize": "cover", "backgroundPosition": "center",
+        })
+    else:
+        style["backgroundColor"] = "#f5f6f8"
+    return style
+
+
+# Semi-transparent panel look for charts/cards sitting on a flip frame —
+# lets the one shared background image show through around them without
+# each panel re-drawing its own copy of the image.
+_FLIP_PANEL_CHART_KWARGS = dict(plot_bgcolor="rgba(255,255,255,0.80)", paper_bgcolor="rgba(0,0,0,0)")
+
+
 def render_category_card(label, stage_map, total_n, total_mw, bg_url, base_color, total_km=0.0,
                           stage_order=None, is_transmission=False):
-    """Render a category card with common background image and styled text."""
+    """Render a category card. The background photo (if any) is applied
+    once by the caller's shared flip frame — this card's header just
+    uses a solid color so the image isn't drawn a second time here."""
     stage_order = stage_order or STAGE_DISPLAY_ORDER
     header_style = {
         "borderRadius": "8px 8px 0 0", "padding": "14px 16px", "color": "#fff",
         "position": "relative", "height": "180px", "display": "flex",
         "flexDirection": "column", "justifyContent": "flex-end",
+        "backgroundColor": base_color,
     }
-    if bg_url:
-        header_style.update({
-            "backgroundImage": f'linear-gradient(rgba(15,20,30,0.55), rgba(15,20,30,0.55)), url("{bg_url}")',
-            "backgroundSize": "cover", "backgroundPosition": "center",
-        })
-    else:
-        header_style["backgroundColor"] = base_color
 
     stage_rows = []
     for st in stage_order:
@@ -1266,44 +1287,54 @@ def status_pie(recs, title):
 # ── OVERVIEW TAB ────────────────────────────────────────────────────────────
 def render_overview(loader, recs):
     """Overview with Power Plant types flip-card + chart, then Province flip-card + chart."""
-    card, fig = _flip_card_and_chart(0)
-    prov_card, prov_fig = _overview_province_flip_card_and_chart(0)
+    card, fig, bg_url = _flip_card_and_chart(0)
+    prov_card, prov_fig, prov_bg_url = _overview_province_flip_card_and_chart(0)
 
     return html.Div([
         html.H5("⚡ Power Plants by Type", className="mb-3 mt-2"),
-        dbc.Row([
-            dbc.Col(html.Div(id="type-flip-card", children=card, style={"height": "360px"}), md=5),
-            dbc.Col(dcc.Graph(id="type-flip-chart", figure=fig, style={"height": "360px"}), md=7),
-        ], className="mb-4"),
+        html.Div(
+            id="type-flip-frame",
+            style=flip_frame_style(bg_url),
+            children=dbc.Row([
+                dbc.Col(html.Div(id="type-flip-card", children=card, style={"height": "360px"}), md=5),
+                dbc.Col(dcc.Graph(id="type-flip-chart", figure=fig, style={"height": "360px"}), md=7),
+            ]),
+        ),
         html.Hr(),
         html.H5("🗺️ Power Plants by Province", className="mb-3 mt-2"),
-        dbc.Row([
-            dbc.Col(html.Div(id="overview-province-flip-card", children=prov_card,
-                              style={"height": "360px"}), md=5),
-            dbc.Col(dcc.Graph(id="overview-province-flip-chart", figure=prov_fig,
-                               style={"height": "360px"}), md=7),
-        ], className="mb-4"),
+        html.Div(
+            id="overview-province-flip-frame",
+            style=flip_frame_style(prov_bg_url),
+            children=dbc.Row([
+                dbc.Col(html.Div(id="overview-province-flip-card", children=prov_card,
+                                  style={"height": "360px"}), md=5),
+                dbc.Col(dcc.Graph(id="overview-province-flip-chart", figure=prov_fig,
+                                   style={"height": "360px"}), md=7),
+            ]),
+        ),
     ])
 
 
 def _overview_province_flip_card_and_chart(n):
     """Animated province flip card + chart for the Overview tab — cycles through
-    provinces the same way _flip_card_and_chart cycles through project types."""
+    provinces the same way _flip_card_and_chart cycles through project types.
+    Returns (card, fig, bg_url) — bg_url is applied once by the caller's
+    shared flip frame, not drawn again inside the card or the chart."""
     loader = STATE["loader"]
     empty_fig = go.Figure()
     if loader is None or loader.error or not loader.records:
-        return None, empty_fig
+        return None, empty_fig, None
     try:
         recs = [r for r in loader.records
                 if r["status"] not in de.EXTRA_STATUS_ORDER and r["type"] != "Transmission Line"]
         if not recs:
-            return None, empty_fig
+            return None, empty_fig, None
 
         prov_totals, prov_stages = compute_breakdown(recs, "province")
         provinces_present = [p for p in PROVINCE_DISPLAY_ORDER if p in prov_totals] + \
                             [p for p in prov_totals if p not in PROVINCE_DISPLAY_ORDER]
         if not provinces_present:
-            return None, empty_fig
+            return None, empty_fig, None
 
         p = provinces_present[n % len(provinces_present)]
         bg_url = ss.get_province_bg_url(p)
@@ -1327,19 +1358,10 @@ def _overview_province_flip_card_and_chart(n):
             title=f"{p} — Capacity by License Stage",
             height=360, yaxis_title="MW",
             margin=dict(l=10, r=10, t=40, b=10),
+            **_FLIP_PANEL_CHART_KWARGS,
         )
-        if bg_url:
-            fig.update_layout(
-                images=[dict(
-                    source=bg_url, xref="paper", yref="paper",
-                    x=0, y=1, sizex=1, sizey=1, xanchor="left", yanchor="top",
-                    sizing="stretch", opacity=0.25, layer="below",
-                )],
-                plot_bgcolor="rgba(255,255,255,0.75)",
-                paper_bgcolor="rgba(0,0,0,0)",
-            )
         add_watermark(fig)
-        return card, fig
+        return card, fig, bg_url
     except Exception:
         tb = traceback.format_exc()
         traceback.print_exc()
@@ -1349,20 +1371,24 @@ def _overview_province_flip_card_and_chart(n):
             html.Pre(tb, className="small mt-1",
                       style={"whiteSpace": "pre-wrap", "maxHeight": "280px", "overflowY": "auto"}),
         ], color="danger")
-        return err_card, empty_fig
+        return err_card, empty_fig, None
 
 
 @app.callback(
     Output("overview-province-flip-card", "children"),
     Output("overview-province-flip-chart", "figure"),
+    Output("overview-province-flip-frame", "style"),
     Input("province-flip-interval", "n_intervals"),
 )
 def flip_overview_province_card(n):
-    return _overview_province_flip_card_and_chart(n)
+    card, fig, bg_url = _overview_province_flip_card_and_chart(n)
+    return card, fig, flip_frame_style(bg_url)
 
 
 def type_flip_chart_figure(t, stage_map, bg_url=None):
-    """Chart figure for type flip card with watermark."""
+    """Chart figure for type flip card with watermark. bg_url is accepted
+    for call-site compatibility but no longer drawn here — the shared
+    flip frame around the card+chart pair carries the background image."""
     stages_present = [s for s in STAGE_DISPLAY_ORDER if s in stage_map]
     use_km = (t == "Transmission Line")
     idx = 2 if use_km else 1
@@ -1377,39 +1403,35 @@ def type_flip_chart_figure(t, stage_map, bg_url=None):
     layout_kwargs = dict(
         title=f"{t} — {'Length (KM)' if use_km else 'Capacity (MW)'} by License Stage",
         height=360, yaxis_title=unit, margin=dict(l=10, r=10, t=40, b=10),
+        **_FLIP_PANEL_CHART_KWARGS,
     )
-    if bg_url:
-        layout_kwargs["images"] = [dict(
-            source=bg_url, xref="paper", yref="paper",
-            x=0, y=1, sizex=1, sizey=1, xanchor="left", yanchor="top",
-            sizing="stretch", opacity=0.30, layer="below",
-        )]
-        layout_kwargs["plot_bgcolor"] = "rgba(255,255,255,0.72)"
-        layout_kwargs["paper_bgcolor"] = "rgba(0,0,0,0)"
     fig.update_layout(**layout_kwargs)
     add_watermark(fig)
     return fig
 
 
 def _flip_card_and_chart(n):
+    """Returns (card, fig, bg_url) — bg_url is applied once by the caller's
+    shared flip frame, not drawn again inside the card or the chart."""
     loader = STATE["loader"]
     empty_fig = go.Figure()
     if loader is None or loader.error or not loader.records:
-        return None, empty_fig
+        return None, empty_fig, None
     try:
         recs = [r for r in loader.records if r["status"] not in de.EXTRA_STATUS_ORDER]
         if not recs:
-            return None, empty_fig
+            return None, empty_fig, None
         totals, stages = compute_breakdown(recs, "type")
-        types = [t for t in de.TYPE_ORDER if t in totals] +                 [t for t in totals if t not in de.TYPE_ORDER]
+        types = [t for t in de.TYPE_ORDER if t in totals] + \
+                [t for t in totals if t not in de.TYPE_ORDER]
         if not types:
-            return None, empty_fig
+            return None, empty_fig, None
         t = types[n % len(types)]
         bg_url = ss.get_type_bg_url(t)
         card = render_category_card(t, stages[t], totals[t][0], totals[t][1],
                                      bg_url, get_type_colors().get(t, "#607d8b"),
                                      total_km=totals[t][2], stage_order=STAGE_DISPLAY_ORDER)
-        return card, type_flip_chart_figure(t, stages[t], bg_url=bg_url)
+        return card, type_flip_chart_figure(t, stages[t], bg_url=bg_url), bg_url
     except Exception:
         tb = traceback.format_exc()
         traceback.print_exc()
@@ -1419,16 +1441,18 @@ def _flip_card_and_chart(n):
             html.Pre(tb, className="small mt-1",
                       style={"whiteSpace": "pre-wrap", "maxHeight": "280px", "overflowY": "auto"}),
         ], color="danger")
-        return err_card, empty_fig
+        return err_card, empty_fig, None
 
 
 @app.callback(
     Output("type-flip-card", "children"),
     Output("type-flip-chart", "figure"),
+    Output("type-flip-frame", "style"),
     Input("type-flip-interval", "n_intervals"),
 )
 def flip_type_card(n):
-    return _flip_card_and_chart(n)
+    card, fig, bg_url = _flip_card_and_chart(n)
+    return card, fig, flip_frame_style(bg_url)
 
 
 # ── STAGE FLIP CARD (for Plants tab) ───────────────────────────────────────
@@ -1447,14 +1471,8 @@ def render_single_stage_card(stage, sel_recs, bg_url, base_color, is_transmissio
         "borderRadius": "8px 8px 0 0", "padding": "14px 16px", "color": "#fff",
         "position": "relative", "height": "180px", "display": "flex",
         "flexDirection": "column", "justifyContent": "flex-end",
+        "backgroundColor": base_color,
     }
-    if bg_url:
-        header_style.update({
-            "backgroundImage": f'linear-gradient(rgba(15,20,30,0.55), rgba(15,20,30,0.55)), url("{bg_url}")',
-            "backgroundSize": "cover", "backgroundPosition": "center",
-        })
-    else:
-        header_style["backgroundColor"] = base_color
 
     rows = []
     for p, v in top_provs:
@@ -1482,13 +1500,16 @@ def render_single_stage_card(stage, sel_recs, bg_url, base_color, is_transmissio
 
 
 def stage_province_chart_figure(stage, sel_recs, is_transmission=False, bg_url=None):
+    """bg_url is accepted for call-site compatibility but no longer drawn
+    here — the shared flip frame around the card+chart pair carries it."""
     prov_totals = defaultdict(lambda: [0, 0.0, 0.0])
     for r in sel_recs:
         p = r["province"] or "Unspecified"
         prov_totals[p][0] += 1
         prov_totals[p][1] += r["capacity_mw"] or 0.0
         prov_totals[p][2] += r.get("line_length_km") or 0.0
-    provinces_present = [p for p in PROVINCE_DISPLAY_ORDER if p in prov_totals] +                         [p for p in prov_totals if p not in PROVINCE_DISPLAY_ORDER]
+    provinces_present = [p for p in PROVINCE_DISPLAY_ORDER if p in prov_totals] + \
+                        [p for p in prov_totals if p not in PROVINCE_DISPLAY_ORDER]
     idx = 2 if is_transmission else 1
     unit = "KM" if is_transmission else "MW"
     yvals = [prov_totals[p][idx] for p in provinces_present]
@@ -1502,32 +1523,28 @@ def stage_province_chart_figure(stage, sel_recs, is_transmission=False, bg_url=N
     layout_kwargs = dict(
         title=f"{stage} — {'Length (KM)' if is_transmission else 'Capacity (MW)'} by Province",
         height=360, yaxis_title=unit, margin=dict(l=10, r=10, t=40, b=10),
+        **_FLIP_PANEL_CHART_KWARGS,
     )
-    if bg_url:
-        layout_kwargs["images"] = [dict(
-            source=bg_url, xref="paper", yref="paper",
-            x=0, y=1, sizex=1, sizey=1, xanchor="left", yanchor="top",
-            sizing="stretch", opacity=0.30, layer="below",
-        )]
-        layout_kwargs["plot_bgcolor"] = "rgba(255,255,255,0.72)"
-        layout_kwargs["paper_bgcolor"] = "rgba(0,0,0,0)"
     fig.update_layout(**layout_kwargs)
     add_watermark(fig)
     return fig
 
 
 def _stage_flip_card_and_chart(n, recs, is_transmission=False):
+    """Returns (card, fig, bg_url) — bg_url is applied once by the caller's
+    shared flip frame, not drawn again inside the card or the chart."""
     empty_fig = go.Figure()
     try:
         stages_present = [s for s in STAGE_DISPLAY_ORDER if any(r["status"] == s for r in recs)]
         if not stages_present:
-            return None, empty_fig
+            return None, empty_fig, None
         st = stages_present[n % len(stages_present)]
         sel = [r for r in recs if r["status"] == st]
         bg_url = ss.get_status_bg_url(st)
         card = render_single_stage_card(st, sel, bg_url, get_status_colors().get(st, "#90a4ae"),
                                          is_transmission=is_transmission)
-        return card, stage_province_chart_figure(st, sel, is_transmission=is_transmission, bg_url=bg_url)
+        fig = stage_province_chart_figure(st, sel, is_transmission=is_transmission, bg_url=bg_url)
+        return card, fig, bg_url
     except Exception:
         tb = traceback.format_exc()
         traceback.print_exc()
@@ -1536,12 +1553,13 @@ def _stage_flip_card_and_chart(n, recs, is_transmission=False):
             html.Pre(tb, className="small mt-1",
                       style={"whiteSpace": "pre-wrap", "maxHeight": "280px", "overflowY": "auto"}),
         ], color="danger")
-        return err_card, empty_fig
+        return err_card, empty_fig, None
 
 
 @app.callback(
     Output("plants-stage-flip-card", "children"),
     Output("plants-stage-flip-chart", "figure"),
+    Output("plants-stage-flip-frame", "style"),
     Input("type-flip-interval", "n_intervals"),
     State("f-type", "value"), State("f-status", "value"), State("f-province", "value"),
     State("f-capacity", "value"), State("f-tx-length", "value"), State("f-year", "data"),
@@ -1555,19 +1573,21 @@ def flip_plants_stage_card(n, f_type, f_status, f_province, f_capacity, f_tx_len
                             f_district, f_local):
     loader = STATE["loader"]
     if loader is None or loader.error or not loader.records:
-        return None, go.Figure()
+        return None, go.Figure(), flip_frame_style(None)
     recs = get_filtered_records(f_type, f_status, f_province, f_capacity, f_year, f_search,
                                  f_date_from, f_date_to, f_cod_from, f_cod_to, f_tx_length,
                                  f_district, f_local)
     plant_recs = [r for r in recs if r["type"] != "Transmission Line"
                   and r["status"] not in de.EXTRA_STATUS_ORDER]
-    return _stage_flip_card_and_chart(n, plant_recs)
+    card, fig, bg_url = _stage_flip_card_and_chart(n, plant_recs)
+    return card, fig, flip_frame_style(bg_url)
 
 
 
 @app.callback(
     Output("tx-stage-flip-card", "children"),
     Output("tx-stage-flip-chart", "figure"),
+    Output("tx-stage-flip-frame", "style"),
     Input("type-flip-interval", "n_intervals"),
     State("f-type", "value"), State("f-status", "value"), State("f-province", "value"),
     State("f-capacity", "value"), State("f-tx-length", "value"), State("f-year", "data"),
@@ -1581,13 +1601,14 @@ def flip_tx_stage_card(n, f_type, f_status, f_province, f_capacity, f_tx_length,
                         f_district, f_local):
     loader = STATE["loader"]
     if loader is None or loader.error or not loader.records:
-        return None, go.Figure()
+        return None, go.Figure(), flip_frame_style(None)
     recs = get_filtered_records(f_type, f_status, f_province, f_capacity, f_year, f_search,
                                  f_date_from, f_date_to, f_cod_from, f_cod_to, f_tx_length,
                                  f_district, f_local)
     tx_recs = [r for r in recs if r["type"] == "Transmission Line"
                and r["status"] not in de.EXTRA_STATUS_ORDER]
-    return _stage_flip_card_and_chart(n, tx_recs, is_transmission=True)
+    card, fig, bg_url = _stage_flip_card_and_chart(n, tx_recs, is_transmission=True)
+    return card, fig, flip_frame_style(bg_url)
 
 
 # ── POWER PLANTS TAB ────────────────────────────────────────────────────────
@@ -1619,10 +1640,18 @@ def render_plants_tab(loader, recs):
                              yaxis_title="MW", margin=dict(l=10, r=10, t=40, b=10))
     add_watermark(fig_stage)
 
-    stage_flip_row = dbc.Row([
-        dbc.Col(html.Div(id="plants-stage-flip-card", style={"height": "360px"}), md=5),
-        dbc.Col(dcc.Graph(id="plants-stage-flip-chart", style={"height": "360px"}), md=7),
-    ], className="mb-3")
+    # Stage flip card + chart (animated), one shared background frame
+    stage_card0, stage_fig0, stage_bg0 = _stage_flip_card_and_chart(0, plant_recs)
+    stage_flip_row = html.Div(
+        id="plants-stage-flip-frame",
+        style=flip_frame_style(stage_bg0),
+        children=dbc.Row([
+            dbc.Col(html.Div(id="plants-stage-flip-card", children=stage_card0,
+                              style={"height": "360px"}), md=5),
+            dbc.Col(dcc.Graph(id="plants-stage-flip-chart", figure=stage_fig0,
+                               style={"height": "360px"}), md=7),
+        ]),
+    )
 
     stage_section = dbc.Row([
         dbc.Col(html.Div([html.H5("All License Stages")] + stage_rows), md=5),
@@ -1632,10 +1661,11 @@ def render_plants_tab(loader, recs):
 
     # REQ 8: Animated province slides in By Province sub-tab
     prov_totals, prov_stages = compute_breakdown(plant_recs, "province")
-    provinces_present = [p for p in PROVINCE_DISPLAY_ORDER if p in prov_totals] +                         [p for p in prov_totals if p not in PROVINCE_DISPLAY_ORDER]
+    provinces_present = [p for p in PROVINCE_DISPLAY_ORDER if p in prov_totals] + \
+                        [p for p in prov_totals if p not in PROVINCE_DISPLAY_ORDER]
 
     # Province flip card + chart (animated)
-    prov_card, prov_fig = _province_flip_card_and_chart(0, plant_recs)
+    prov_card, prov_fig, prov_bg_url = _province_flip_card_and_chart(0, plant_recs)
 
     prov_cards = [
         render_category_card(p, prov_stages[p], prov_totals[p][0], prov_totals[p][1],
@@ -1654,13 +1684,19 @@ def render_plants_tab(loader, recs):
                             yaxis_title="Capacity (MW)", margin=dict(l=10, r=10, t=40, b=10))
     add_watermark(fig_prov)
 
-    # REQ 8: Animated province slide section
+    # REQ 8: Animated province slide section — one shared background frame
     province_slide_section = html.Div([
         html.H5("🗺️ Province Overview (Animated)", className="mb-3"),
-        dbc.Row([
-            dbc.Col(html.Div(id="province-flip-card", children=prov_card, style={"height": "360px"}), md=5),
-            dbc.Col(dcc.Graph(id="province-flip-chart", figure=prov_fig, style={"height": "360px"}), md=7),
-        ], className="mb-4"),
+        html.Div(
+            id="province-flip-frame",
+            style=flip_frame_style(prov_bg_url),
+            children=dbc.Row([
+                dbc.Col(html.Div(id="province-flip-card", children=prov_card,
+                                  style={"height": "360px"}), md=5),
+                dbc.Col(dcc.Graph(id="province-flip-chart", figure=prov_fig,
+                                   style={"height": "360px"}), md=7),
+            ]),
+        ),
     ])
 
     prov_section = dbc.Row([
@@ -1676,13 +1712,16 @@ def render_plants_tab(loader, recs):
 
 
 def _province_flip_card_and_chart(n, recs):
-    """Animated province flip card for Power Plants > By Province tab."""
+    """Animated province flip card for Power Plants > By Province tab.
+    Returns (card, fig, bg_url) — bg_url is applied once by the caller's
+    shared flip frame, not drawn again inside the card or the chart."""
     empty_fig = go.Figure()
     try:
         prov_totals, prov_stages = compute_breakdown(recs, "province")
-        provinces_present = [p for p in PROVINCE_DISPLAY_ORDER if p in prov_totals] +                             [p for p in prov_totals if p not in PROVINCE_DISPLAY_ORDER]
+        provinces_present = [p for p in PROVINCE_DISPLAY_ORDER if p in prov_totals] + \
+                            [p for p in prov_totals if p not in PROVINCE_DISPLAY_ORDER]
         if not provinces_present:
-            return None, empty_fig
+            return None, empty_fig, None
 
         p = provinces_present[n % len(provinces_present)]
         bg_url = ss.get_province_bg_url(p)
@@ -1707,19 +1746,10 @@ def _province_flip_card_and_chart(n, recs):
             title=f"{p} — Capacity by License Stage",
             height=360, yaxis_title="MW",
             margin=dict(l=10, r=10, t=40, b=10),
+            **_FLIP_PANEL_CHART_KWARGS,
         )
-        if bg_url:
-            fig.update_layout(
-                images=[dict(
-                    source=bg_url, xref="paper", yref="paper",
-                    x=0, y=1, sizex=1, sizey=1, xanchor="left", yanchor="top",
-                    sizing="stretch", opacity=0.25, layer="below",
-                )],
-                plot_bgcolor="rgba(255,255,255,0.75)",
-                paper_bgcolor="rgba(0,0,0,0)",
-            )
         add_watermark(fig)
-        return card, fig
+        return card, fig, bg_url
     except Exception:
         tb = traceback.format_exc()
         traceback.print_exc()
@@ -1728,12 +1758,13 @@ def _province_flip_card_and_chart(n, recs):
             html.Pre(tb, className="small mt-1",
                       style={"whiteSpace": "pre-wrap", "maxHeight": "280px", "overflowY": "auto"}),
         ], color="danger")
-        return err_card, empty_fig
+        return err_card, empty_fig, None
 
 
 @app.callback(
     Output("province-flip-card", "children"),
     Output("province-flip-chart", "figure"),
+    Output("province-flip-frame", "style"),
     Input("province-flip-interval", "n_intervals"),
     State("f-type", "value"), State("f-status", "value"), State("f-province", "value"),
     State("f-capacity", "value"), State("f-tx-length", "value"), State("f-year", "data"),
@@ -1747,13 +1778,14 @@ def flip_province_card(n, f_type, f_status, f_province, f_capacity, f_tx_length,
                         f_district, f_local):
     loader = STATE["loader"]
     if loader is None or loader.error or not loader.records:
-        return None, go.Figure()
+        return None, go.Figure(), flip_frame_style(None)
     recs = get_filtered_records(f_type, f_status, f_province, f_capacity, f_year, f_search,
                                  f_date_from, f_date_to, f_cod_from, f_cod_to, f_tx_length,
                                  f_district, f_local)
     plant_recs = [r for r in recs if r["type"] != "Transmission Line"
                   and r["status"] not in de.EXTRA_STATUS_ORDER]
-    return _province_flip_card_and_chart(n, plant_recs)
+    card, fig, bg_url = _province_flip_card_and_chart(n, plant_recs)
+    return card, fig, flip_frame_style(bg_url)
 
 
 # ── TRANSMISSION TAB ────────────────────────────────────────────────────────
@@ -1807,10 +1839,17 @@ def render_transmission_tab(loader, recs):
     # REQ 9: No flipping when filter is applied in Transmission tab
     # We keep the stage flip card but it won't auto-flip when filtered
     # The flip callback still works but user can also see static view
-    stage_flip_row = dbc.Row([
-        dbc.Col(html.Div(id="tx-stage-flip-card", style={"height": "360px"}), md=5),
-        dbc.Col(dcc.Graph(id="tx-stage-flip-chart", style={"height": "360px"}), md=7),
-    ], className="mb-3")
+    tx_card0, tx_fig0, tx_bg0 = _stage_flip_card_and_chart(0, tx_recs, is_transmission=True)
+    stage_flip_row = html.Div(
+        id="tx-stage-flip-frame",
+        style=flip_frame_style(tx_bg0),
+        children=dbc.Row([
+            dbc.Col(html.Div(id="tx-stage-flip-card", children=tx_card0,
+                              style={"height": "360px"}), md=5),
+            dbc.Col(dcc.Graph(id="tx-stage-flip-chart", figure=tx_fig0,
+                               style={"height": "360px"}), md=7),
+        ]),
+    )
 
     stage_section = dbc.Row([
         dbc.Col(html.Div([html.H5("All License Stages")] + stage_rows), md=5),
