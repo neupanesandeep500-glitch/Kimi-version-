@@ -866,7 +866,7 @@ def render_tab(tab, f_type, f_status, f_province, f_capacity, f_tx_length, f_yea
         CHART_STYLE_STATE.update(chart_style)
 
     loader = STATE["loader"]
-    gis_controls_style = {"display": "block"} if tab == "gis" else {"display": "none"}
+    gis_controls_style = {"display": "none"}
 
     if loader is None or loader.error or not loader.records:
         err_detail = (loader.error if (loader and loader.error) else STATE.get("error"))
@@ -996,10 +996,35 @@ def _looks_like_place(s):
 
 
 def _admin_units_str(r, max_each=3):
-    provs = [p.strip() for p in (r.get("provinces_all") or r.get("province") or "").split("/")
-             if _looks_like_place(p)]
-    dists = [d.strip() for d in (r.get("districts_all") or r.get("district") or "").split("/")
-             if _looks_like_place(d)]
+    """Provinces/Districts/Local Bodies as per the project's License
+    Boundary overlapping the GIS map (province_pct / district_pct /
+    local_pct, computed by GISEngine.bbox_overlap_pct against the real
+    boundary polygons) — not the sheet's raw address columns. Falls back
+    to the sheet address only for records with no GIS overlap on file
+    (e.g. no surveyed bbox/coordinates yet)."""
+    prov_pct = r.get("province_pct") or {}
+    dist_pct = r.get("district_pct") or {}
+    local_pct = r.get("local_pct") or []
+
+    if prov_pct or dist_pct or local_pct:
+        provs = [p for p, _ in sorted(prov_pct.items(), key=lambda kv: -kv[1])][:max_each]
+        dists = [d for d, _ in sorted(dist_pct.items(), key=lambda kv: -kv[1])][:max_each]
+        locals_ = [lb["name"] for lb in
+                   sorted(local_pct, key=lambda lb: -(lb.get("pct") or 0))][:max_each]
+        parts = []
+        if provs:
+            parts.append(("Province" if len(provs) == 1 else "Provinces") + ": " + ", ".join(provs))
+        if dists:
+            parts.append(("District" if len(dists) == 1 else "Districts") + ": " + ", ".join(dists))
+        if locals_:
+            parts.append(("Local Body" if len(locals_) == 1 else "Local Bodies") + ": " + ", ".join(locals_))
+        if parts:
+            return " • ".join(parts)
+
+    # Fallback: no GIS boundary-overlap data for this record — use the
+    # sheet's own address columns instead.
+    provs = [p.strip() for p in (r.get("province") or "").split("/") if _looks_like_place(p)]
+    dists = [d.strip() for d in (r.get("district") or "").split("/") if _looks_like_place(d)]
     provs = list(dict.fromkeys(provs))[:max_each]
     dists = list(dict.fromkeys(dists))[:max_each]
     local = de.record_local(r)
@@ -1133,6 +1158,38 @@ def build_ticker_segments(loader, recs=None):
 
 
 
+_TICKER_BG_RGB = (0x10, 0x17, 0x26)  # matches .ticker-bar background: #101726
+
+
+def _ticker_safe_color(hex_color):
+    """The marquee's colored titles are drawn straight from the status/
+    province/type color palettes, which were designed for chart bars on
+    a light background — some are dark enough to nearly disappear
+    against the ticker bar's own dark navy background (near-matching
+    font/background color). Lighten any color that doesn't have enough
+    contrast against that background, leaving already-legible colors
+    untouched."""
+    try:
+        h = hex_color.lstrip("#")
+        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    except (ValueError, AttributeError, IndexError):
+        return hex_color
+    bg_r, bg_g, bg_b = _TICKER_BG_RGB
+    # Simple perceptual distance check against the ticker background.
+    dist = ((r - bg_r) ** 2 + (g - bg_g) ** 2 + (b - bg_b) ** 2) ** 0.5
+    if dist >= 140:
+        return hex_color
+    # Blend toward white until it's clearly distinguishable from the
+    # dark background, preserving the color's hue rather than replacing it.
+    for step in (0.35, 0.55, 0.75):
+        nr = round(r + (255 - r) * step)
+        ng = round(g + (255 - g) * step)
+        nb = round(b + (255 - b) * step)
+        if ((nr - bg_r) ** 2 + (ng - bg_g) ** 2 + (nb - bg_b) ** 2) ** 0.5 >= 140:
+            return f"#{nr:02x}{ng:02x}{nb:02x}"
+    return "#e7edf3"  # safe fallback: near-white
+
+
 def render_ticker_bar(loader, recs=None):
     if loader is None or not loader.records:
         return None
@@ -1145,7 +1202,7 @@ def render_ticker_bar(loader, recs=None):
         return None
     spans = []
     for text, color in segs:
-        spans.append(html.Span(text, style={"color": color, "marginRight": "48px"}))
+        spans.append(html.Span(text, style={"color": _ticker_safe_color(color), "marginRight": "48px"}))
     track_children = spans + spans
     total_chars = sum(len(t) for t, _ in segs)
     duration = max(60, round(total_chars / 9))
@@ -1185,29 +1242,41 @@ def add_watermark_matplotlib(fig):
 
 
 # ── CATEGORY CARD WITH COMMON BACKGROUND ────────────────────────────────────
-def flip_frame_style(bg_url):
-    """Style for the single shared background frame that wraps a flip
-    card + its chart. Used consistently everywhere a category (type,
-    province, stage) flips through a card-plus-chart pair, so the
-    background photo appears exactly once — behind both — instead of
-    being applied separately to the card header and the chart panel."""
-    style = {
+def flip_frame_style(bg_url=None):
+    """Plain style for the frame that wraps a flip card + its chart.
+    The background photo is NOT applied here — it lives only on the
+    heading above the frame (see flip_heading_style). bg_url is kept as
+    an accepted (ignored) argument so existing call sites don't need to
+    change their signatures."""
+    return {
         "borderRadius": "12px", "padding": "16px", "position": "relative",
+        "backgroundColor": "#f5f6f8",
+    }
+
+
+def flip_heading_style(bg_url):
+    """Background photo goes here, and here only: the heading strip
+    above a flip card + chart section. Keeps the photo visible as a
+    section header while leaving the card and chart panels below it
+    on a plain background."""
+    style = {
+        "borderRadius": "8px", "padding": "10px 16px", "marginBottom": "12px",
+        "color": "#fff", "transition": "background-image 0.6s ease-in-out",
     }
     if bg_url:
         style.update({
-            "backgroundImage": f'linear-gradient(rgba(246,247,249,0.60), rgba(246,247,249,0.60)), url("{bg_url}")',
+            "backgroundImage": f'linear-gradient(rgba(10,20,40,0.55), rgba(10,20,40,0.55)), url("{bg_url}")',
             "backgroundSize": "cover", "backgroundPosition": "center",
         })
     else:
-        style["backgroundColor"] = "#f5f6f8"
+        style["backgroundColor"] = "#37474f"
     return style
 
 
-# Semi-transparent panel look for charts/cards sitting on a flip frame —
-# lets the one shared background image show through around them without
-# each panel re-drawing its own copy of the image.
-_FLIP_PANEL_CHART_KWARGS = dict(plot_bgcolor="rgba(255,255,255,0.80)", paper_bgcolor="rgba(0,0,0,0)")
+# Solid panel look for charts/cards — no background photo is drawn behind
+# them anymore (REQ: image restricted to the section heading only).
+_FLIP_PANEL_CHART_KWARGS = dict(plot_bgcolor="#ffffff", paper_bgcolor="#ffffff",
+                                 transition=dict(duration=500, easing="cubic-in-out"))
 
 
 def render_category_card(label, stage_map, total_n, total_mw, bg_url, base_color, total_km=0.0,
@@ -1252,8 +1321,8 @@ def render_category_card(label, stage_map, total_n, total_mw, bg_url, base_color
         ], style=header_style),
         dbc.CardBody(stage_rows or [html.Div("No records", className="small text-muted")],
                      style={"padding": "8px 16px", "overflowY": "auto"}),
-    ], className="mb-3 shadow-sm", style={"height": "360px", "display": "flex",
-                                            "flexDirection": "column"})
+    ], key=f"cat-{label}", className="mb-3 shadow-sm flip-card-animate",
+       style={"height": "360px", "display": "flex", "flexDirection": "column"})
 
 
 def compute_breakdown(recs, key_field):
@@ -1293,20 +1362,22 @@ def render_overview(loader, recs):
     prov_card, prov_fig, prov_bg_url = _overview_province_flip_card_and_chart(0)
 
     return html.Div([
-        html.H5("⚡ Power Plants by Type", className="mb-3 mt-2"),
+        html.Div(html.H5("⚡ Power Plants by Type", className="m-0"),
+                 id="type-flip-heading", style=flip_heading_style(bg_url)),
         html.Div(
             id="type-flip-frame",
-            style=flip_frame_style(bg_url),
+            style=flip_frame_style(),
             children=dbc.Row([
                 dbc.Col(html.Div(id="type-flip-card", children=card, style={"height": "360px"}), md=5),
                 dbc.Col(dcc.Graph(id="type-flip-chart", figure=fig, style={"height": "360px"}), md=7),
             ]),
         ),
         html.Hr(),
-        html.H5("🗺️ Power Plants by Province", className="mb-3 mt-2"),
+        html.Div(html.H5("🗺️ Power Plants by Province", className="m-0"),
+                 id="overview-province-flip-heading", style=flip_heading_style(prov_bg_url)),
         html.Div(
             id="overview-province-flip-frame",
-            style=flip_frame_style(prov_bg_url),
+            style=flip_frame_style(),
             children=dbc.Row([
                 dbc.Col(html.Div(id="overview-province-flip-card", children=prov_card,
                                   style={"height": "360px"}), md=5),
@@ -1380,11 +1451,12 @@ def _overview_province_flip_card_and_chart(n):
     Output("overview-province-flip-card", "children"),
     Output("overview-province-flip-chart", "figure"),
     Output("overview-province-flip-frame", "style"),
+    Output("overview-province-flip-heading", "style"),
     Input("province-flip-interval", "n_intervals"),
 )
 def flip_overview_province_card(n):
     card, fig, bg_url = _overview_province_flip_card_and_chart(n)
-    return card, fig, flip_frame_style(bg_url)
+    return card, fig, flip_frame_style(), flip_heading_style(bg_url)
 
 
 def type_flip_chart_figure(t, stage_map, bg_url=None):
@@ -1450,11 +1522,12 @@ def _flip_card_and_chart(n):
     Output("type-flip-card", "children"),
     Output("type-flip-chart", "figure"),
     Output("type-flip-frame", "style"),
+    Output("type-flip-heading", "style"),
     Input("type-flip-interval", "n_intervals"),
 )
 def flip_type_card(n):
     card, fig, bg_url = _flip_card_and_chart(n)
-    return card, fig, flip_frame_style(bg_url)
+    return card, fig, flip_frame_style(), flip_heading_style(bg_url)
 
 
 # ── STAGE FLIP CARD (for Plants tab) ───────────────────────────────────────
@@ -1467,7 +1540,10 @@ def render_single_stage_card(stage, sel_recs, bg_url, base_color, is_transmissio
         p = r["province"] or "Unspecified"
         prov_totals[p][0] += 1
         prov_totals[p][1] += r["capacity_mw"] or 0.0
-    top_provs = sorted(prov_totals.items(), key=lambda kv: -kv[1][1])[:5]
+    # All 7 canonical provinces, ordered — not just the top 5 by capacity.
+    ordered_provs = [p for p in PROVINCE_DISPLAY_ORDER] + \
+                    [p for p in prov_totals if p not in PROVINCE_DISPLAY_ORDER]
+    top_provs = [(p, prov_totals.get(p, [0, 0.0])) for p in ordered_provs]
 
     header_style = {
         "borderRadius": "8px 8px 0 0", "padding": "14px 16px", "color": "#fff",
@@ -1497,8 +1573,8 @@ def render_single_stage_card(stage, sel_recs, bg_url, base_color, is_transmissio
         ], style=header_style),
         dbc.CardBody(rows or [html.Div("No records for this stage yet", className="small text-muted")],
                      style={"padding": "8px 16px", "overflowY": "auto"}),
-    ], className="mb-3 shadow-sm", style={"height": "360px", "display": "flex",
-                                            "flexDirection": "column"})
+    ], key=f"stage-{stage}", className="mb-3 shadow-sm flip-card-animate",
+       style={"height": "360px", "display": "flex", "flexDirection": "column"})
 
 
 def stage_province_chart_figure(stage, sel_recs, is_transmission=False, bg_url=None):
@@ -1562,6 +1638,7 @@ def _stage_flip_card_and_chart(n, recs, is_transmission=False):
     Output("plants-stage-flip-card", "children"),
     Output("plants-stage-flip-chart", "figure"),
     Output("plants-stage-flip-frame", "style"),
+    Output("plants-stage-flip-heading", "style"),
     Input("type-flip-interval", "n_intervals"),
     State("f-type", "value"), State("f-status", "value"), State("f-province", "value"),
     State("f-capacity", "value"), State("f-tx-length", "value"), State("f-year", "data"),
@@ -1575,14 +1652,14 @@ def flip_plants_stage_card(n, f_type, f_status, f_province, f_capacity, f_tx_len
                             f_district, f_local):
     loader = STATE["loader"]
     if loader is None or loader.error or not loader.records:
-        return None, go.Figure(), flip_frame_style(None)
+        return None, go.Figure(), flip_frame_style(), flip_heading_style(None)
     recs = get_filtered_records(f_type, f_status, f_province, f_capacity, f_year, f_search,
                                  f_date_from, f_date_to, f_cod_from, f_cod_to, f_tx_length,
                                  f_district, f_local)
     plant_recs = [r for r in recs if r["type"] != "Transmission Line"
                   and r["status"] not in de.EXTRA_STATUS_ORDER]
     card, fig, bg_url = _stage_flip_card_and_chart(n, plant_recs)
-    return card, fig, flip_frame_style(bg_url)
+    return card, fig, flip_frame_style(), flip_heading_style(bg_url)
 
 
 
@@ -1590,6 +1667,7 @@ def flip_plants_stage_card(n, f_type, f_status, f_province, f_capacity, f_tx_len
     Output("tx-stage-flip-card", "children"),
     Output("tx-stage-flip-chart", "figure"),
     Output("tx-stage-flip-frame", "style"),
+    Output("tx-stage-flip-heading", "style"),
     Input("type-flip-interval", "n_intervals"),
     State("f-type", "value"), State("f-status", "value"), State("f-province", "value"),
     State("f-capacity", "value"), State("f-tx-length", "value"), State("f-year", "data"),
@@ -1603,14 +1681,14 @@ def flip_tx_stage_card(n, f_type, f_status, f_province, f_capacity, f_tx_length,
                         f_district, f_local):
     loader = STATE["loader"]
     if loader is None or loader.error or not loader.records:
-        return None, go.Figure(), flip_frame_style(None)
+        return None, go.Figure(), flip_frame_style(), flip_heading_style(None)
     recs = get_filtered_records(f_type, f_status, f_province, f_capacity, f_year, f_search,
                                  f_date_from, f_date_to, f_cod_from, f_cod_to, f_tx_length,
                                  f_district, f_local)
     tx_recs = [r for r in recs if r["type"] == "Transmission Line"
                and r["status"] not in de.EXTRA_STATUS_ORDER]
     card, fig, bg_url = _stage_flip_card_and_chart(n, tx_recs, is_transmission=True)
-    return card, fig, flip_frame_style(bg_url)
+    return card, fig, flip_frame_style(), flip_heading_style(bg_url)
 
 
 # ── POWER PLANTS TAB ────────────────────────────────────────────────────────
@@ -1642,18 +1720,22 @@ def render_plants_tab(loader, recs):
                              yaxis_title="MW", margin=dict(l=10, r=10, t=40, b=10))
     add_watermark(fig_stage)
 
-    # Stage flip card + chart (animated), one shared background frame
+    # Stage flip card + chart (animated), background photo on heading only
     stage_card0, stage_fig0, stage_bg0 = _stage_flip_card_and_chart(0, plant_recs)
-    stage_flip_row = html.Div(
-        id="plants-stage-flip-frame",
-        style=flip_frame_style(stage_bg0),
-        children=dbc.Row([
-            dbc.Col(html.Div(id="plants-stage-flip-card", children=stage_card0,
-                              style={"height": "360px"}), md=5),
-            dbc.Col(dcc.Graph(id="plants-stage-flip-chart", figure=stage_fig0,
-                               style={"height": "360px"}), md=7),
-        ]),
-    )
+    stage_flip_row = html.Div([
+        html.Div(html.H5("⚡ License Stage (Animated)", className="m-0"),
+                 id="plants-stage-flip-heading", style=flip_heading_style(stage_bg0)),
+        html.Div(
+            id="plants-stage-flip-frame",
+            style=flip_frame_style(),
+            children=dbc.Row([
+                dbc.Col(html.Div(id="plants-stage-flip-card", children=stage_card0,
+                                  style={"height": "360px"}), md=5),
+                dbc.Col(dcc.Graph(id="plants-stage-flip-chart", figure=stage_fig0,
+                                   style={"height": "360px"}), md=7),
+            ]),
+        ),
+    ])
 
     stage_section = dbc.Row([
         dbc.Col(html.Div([html.H5("All License Stages")] + stage_rows), md=5),
@@ -1666,15 +1748,11 @@ def render_plants_tab(loader, recs):
     provinces_present = [p for p in PROVINCE_DISPLAY_ORDER if p in prov_totals] + \
                         [p for p in prov_totals if p not in PROVINCE_DISPLAY_ORDER]
 
-    # Province flip card + chart (animated)
+    # Province flip card + chart (animated) — this is the only per-province
+    # card shown; the static list of every province's card that used to sit
+    # below it has been removed as redundant (the flip card cycles through
+    # all provinces continuously already).
     prov_card, prov_fig, prov_bg_url = _province_flip_card_and_chart(0, plant_recs)
-
-    prov_cards = [
-        render_category_card(p, prov_stages[p], prov_totals[p][0], prov_totals[p][1],
-                              ss.get_province_bg_url(p), get_province_colors().get(p, "#455a64"),
-                              stage_order=STAGE_DISPLAY_ORDER)
-        for p in provinces_present
-    ]
 
     prov_colors = [get_province_colors().get(p, "#455a64") for p in provinces_present]
     fig_prov = go.Figure(go.Bar(
@@ -1686,12 +1764,13 @@ def render_plants_tab(loader, recs):
                             yaxis_title="Capacity (MW)", margin=dict(l=10, r=10, t=40, b=10))
     add_watermark(fig_prov)
 
-    # REQ 8: Animated province slide section — one shared background frame
+    # REQ 8: Animated province slide section — background photo on heading only
     province_slide_section = html.Div([
-        html.H5("🗺️ Province Overview (Animated)", className="mb-3"),
+        html.Div(html.H5("🗺️ Province Overview (Animated)", className="m-0"),
+                 id="province-flip-heading", style=flip_heading_style(prov_bg_url)),
         html.Div(
             id="province-flip-frame",
-            style=flip_frame_style(prov_bg_url),
+            style=flip_frame_style(),
             children=dbc.Row([
                 dbc.Col(html.Div(id="province-flip-card", children=prov_card,
                                   style={"height": "360px"}), md=5),
@@ -1701,15 +1780,17 @@ def render_plants_tab(loader, recs):
         ),
     ])
 
+    # Province chart stays as it was — just the flip card above it now,
+    # no separate static province-card list.
     prov_section = dbc.Row([
-        dbc.Col(prov_cards, md=5),
-        dbc.Col(dcc.Graph(figure=fig_prov), md=7),
+        dbc.Col(dcc.Graph(figure=fig_prov), md=12),
     ])
 
-    return dbc.Tabs([
-        dbc.Tab(stage_section, label="License Stage", tab_style={"marginTop": "10px"}),
+    return dbc.Tabs(id="plants-subtabs", active_tab="stage", children=[
+        dbc.Tab(stage_section, label="License Stage", tab_id="stage",
+                tab_style={"marginTop": "10px"}),
         dbc.Tab(html.Div([province_slide_section, html.Hr(), prov_section]),
-                label="By Province", tab_style={"marginTop": "10px"}),
+                label="By Province", tab_id="by-province", tab_style={"marginTop": "10px"}),
     ])
 
 
@@ -1767,6 +1848,7 @@ def _province_flip_card_and_chart(n, recs):
     Output("province-flip-card", "children"),
     Output("province-flip-chart", "figure"),
     Output("province-flip-frame", "style"),
+    Output("province-flip-heading", "style"),
     Input("province-flip-interval", "n_intervals"),
     State("f-type", "value"), State("f-status", "value"), State("f-province", "value"),
     State("f-capacity", "value"), State("f-tx-length", "value"), State("f-year", "data"),
@@ -1780,14 +1862,14 @@ def flip_province_card(n, f_type, f_status, f_province, f_capacity, f_tx_length,
                         f_district, f_local):
     loader = STATE["loader"]
     if loader is None or loader.error or not loader.records:
-        return None, go.Figure(), flip_frame_style(None)
+        return None, go.Figure(), flip_frame_style(), flip_heading_style(None)
     recs = get_filtered_records(f_type, f_status, f_province, f_capacity, f_year, f_search,
                                  f_date_from, f_date_to, f_cod_from, f_cod_to, f_tx_length,
                                  f_district, f_local)
     plant_recs = [r for r in recs if r["type"] != "Transmission Line"
                   and r["status"] not in de.EXTRA_STATUS_ORDER]
     card, fig, bg_url = _province_flip_card_and_chart(n, plant_recs)
-    return card, fig, flip_frame_style(bg_url)
+    return card, fig, flip_frame_style(), flip_heading_style(bg_url)
 
 
 # ── TRANSMISSION TAB ────────────────────────────────────────────────────────
@@ -1842,16 +1924,20 @@ def render_transmission_tab(loader, recs):
     # We keep the stage flip card but it won't auto-flip when filtered
     # The flip callback still works but user can also see static view
     tx_card0, tx_fig0, tx_bg0 = _stage_flip_card_and_chart(0, tx_recs, is_transmission=True)
-    stage_flip_row = html.Div(
-        id="tx-stage-flip-frame",
-        style=flip_frame_style(tx_bg0),
-        children=dbc.Row([
-            dbc.Col(html.Div(id="tx-stage-flip-card", children=tx_card0,
-                              style={"height": "360px"}), md=5),
-            dbc.Col(dcc.Graph(id="tx-stage-flip-chart", figure=tx_fig0,
-                               style={"height": "360px"}), md=7),
-        ]),
-    )
+    stage_flip_row = html.Div([
+        html.Div(html.H5("🔌 License Stage (Animated)", className="m-0"),
+                 id="tx-stage-flip-heading", style=flip_heading_style(tx_bg0)),
+        html.Div(
+            id="tx-stage-flip-frame",
+            style=flip_frame_style(),
+            children=dbc.Row([
+                dbc.Col(html.Div(id="tx-stage-flip-card", children=tx_card0,
+                                  style={"height": "360px"}), md=5),
+                dbc.Col(dcc.Graph(id="tx-stage-flip-chart", figure=tx_fig0,
+                                   style={"height": "360px"}), md=7),
+            ]),
+        ),
+    ])
 
     stage_section = dbc.Row([
         dbc.Col(html.Div([html.H5("All License Stages")] + stage_rows), md=5),
@@ -1893,9 +1979,11 @@ def render_transmission_tab(loader, recs):
 
     return html.Div([
         kpis,
-        dbc.Tabs([
-            dbc.Tab(stage_section, label="License Stage", tab_style={"marginTop": "10px"}),
-            dbc.Tab(volt_section, label="By Voltage Class", tab_style={"marginTop": "10px"}),
+        dbc.Tabs(id="tx-subtabs", active_tab="stage", children=[
+            dbc.Tab(stage_section, label="License Stage", tab_id="stage",
+                    tab_style={"marginTop": "10px"}),
+            dbc.Tab(volt_section, label="By Voltage Class", tab_id="by-voltage",
+                    tab_style={"marginTop": "10px"}),
         ]),
     ])
 
@@ -2064,7 +2152,7 @@ def render_gis_tab(loader, recs, f_crs, show_boundary=True, show_pa=False):
             html.Div(
                 "Filter by license stage, project type, province, or search by name/promoter/"
                 "district/local body directly in the map's own sidebar. Toggle district/local-body/"
-                "protected-area/claimed-area layers on and off, and switch the emphasized coordinate "
+                "protected-area layers on and off, and switch the emphasized coordinate "
                 "system (WGS-84 vs. Everest 1830) from the sidebar as well.",
                 className="text-muted small mt-1",
             ),
@@ -2080,15 +2168,7 @@ def render_gis_tab(loader, recs, f_crs, show_boundary=True, show_pa=False):
                 map_view,
             ])
 
-    pa_names = de.GIS.pa_names() if getattr(de.GIS, 'pa_loaded', False) else []
-    pa_view = (dbc.ListGroup([dbc.ListGroupItem(n) for n in pa_names])
-               if pa_names else
-               dbc.Alert("No protected-area layer is loaded.", color="info"))
-
-    return dbc.Tabs([
-        dbc.Tab(map_view, label="Map"),
-        dbc.Tab(pa_view, label="Protected Areas List"),
-    ])
+    return map_view
 
 
 
@@ -2132,12 +2212,12 @@ def render_compare(loader, recs):
     fig_volt.update_layout(title="Transmission Lines by Voltage Class", height=380)
     add_watermark(fig_volt)
 
-    return dbc.Tabs([
-        dbc.Tab(dcc.Graph(figure=fig_plants), label="Power Plants",
+    return dbc.Tabs(id="compare-subtabs", active_tab="plants", children=[
+        dbc.Tab(dcc.Graph(figure=fig_plants), label="Power Plants", tab_id="plants",
                 tab_style={"marginTop": "10px"}),
-        dbc.Tab(dcc.Graph(figure=fig_lines), label="Transmission Lines",
+        dbc.Tab(dcc.Graph(figure=fig_lines), label="Transmission Lines", tab_id="lines",
                 tab_style={"marginTop": "10px"}),
-        dbc.Tab(dcc.Graph(figure=fig_volt), label="By Voltage Class",
+        dbc.Tab(dcc.Graph(figure=fig_volt), label="By Voltage Class", tab_id="by-voltage",
                 tab_style={"marginTop": "10px"}),
     ])
 
