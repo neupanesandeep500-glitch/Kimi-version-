@@ -545,7 +545,7 @@ app.layout = dbc.Container(fluid=True, children=[
                 html.Div([
                     html.Div("Nepal Power Plant & Transmission Line License Status Dashboard",
                               className="site-header-title"),
-                    html.Div("Department of Electricity Development · Live licensing pipeline overview",
+                    html.Div("Source: www.doed.gov.np | Licensing pipeline overview",
                               className="site-header-subtitle"),
                 ]),
             ], className="d-flex align-items-center")),
@@ -595,9 +595,9 @@ app.layout = dbc.Container(fluid=True, children=[
 
     html.Div(id="_init_trigger", style={"display": "none"}),
     dcc.Interval(id="init-once", n_intervals=0, max_intervals=1, interval=500),
-    dcc.Interval(id="refresh-poll", n_intervals=0, interval=60_000),
-    dcc.Interval(id="type-flip-interval", n_intervals=0, interval=4_000),
-    dcc.Interval(id="province-flip-interval", n_intervals=0, interval=5_000),
+    dcc.Interval(id="refresh-poll", n_intervals=0, interval=36000_000),
+    dcc.Interval(id="type-flip-interval", n_intervals=0, interval=6_000),
+    dcc.Interval(id="province-flip-interval", n_intervals=0, interval=6_000),
     html.Footer(className="site-footer", children=[
         dbc.Row([
             dbc.Col(md=8, children=[
@@ -612,6 +612,8 @@ app.layout = dbc.Container(fluid=True, children=[
                        href="https://doed.gov.np", target="_blank", className="d-block"),
                 html.A("Nepal Electricity Authority (NEA)",
                        href="https://nea.org.np", target="_blank", className="d-block"),
+                  html.A("Alternative Energy Promotion Center (AEPC)",
+                       href="https://aepc.org.np", target="_blank", className="d-block"),
             ]),
             dbc.Col(md=4, className="text-md-end", children=[
                 html.Div("👥 …visitors", id="visitor-counter", className="footer-visitor-counter"),
