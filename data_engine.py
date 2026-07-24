@@ -1119,15 +1119,25 @@ class DataLoader:
             # Status filter
             if statuses and r["status"] not in statuses:
                 continue
-            # Province filter
-            if provinces and r["province"] not in provinces:
-                continue
-            # District filter
-            if districts and r["district"] not in districts:
-                continue
-            # Local body filter
-            if locals_sel and r.get("local_body") not in locals_sel:
-                continue
+            # Province filter — match the record's primary province OR any
+            # province its license-area polygon actually overlaps.
+            if provinces:
+                prov_hits = set(r.get("province_pct") or {}) | {r["province"]}
+                if not (prov_hits & set(provinces)):
+                    continue
+            # District filter — same idea, against the real overlap breakdown.
+            if districts:
+                dist_hits = set(r.get("district_pct") or {}) | {r["district"]}
+                if not (dist_hits & set(districts)):
+                    continue
+            # Local body filter — same idea; local_pct is a list of
+            # {name, type, district, pct} dicts rather than a plain dict.
+            if locals_sel:
+                lb_hits = {lb["name"] for lb in (r.get("local_pct") or [])}
+                if r.get("local_body"):
+                    lb_hits.add(r["local_body"])
+                if not (lb_hits & set(locals_sel)):
+                    continue
             # Capacity filter
             if cap_min is not None and (r["capacity_mw"] is None or r["capacity_mw"] < cap_min):
                 continue
