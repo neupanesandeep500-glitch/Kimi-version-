@@ -543,9 +543,9 @@ app.layout = dbc.Container(fluid=True, children=[
                          alt="Organisation logo", className="me-2 site-header-logo")
                 if ss.get_logo_path() else None,
                 html.Div([
-                    html.Div("Nepal Power Plants and Transmission Lines License Status",
+                    html.Div("Nepal Power Plant & Transmission Line License Status Dashboard",
                               className="site-header-title"),
-                    html.Div("Source: DoED·  Licensing Pipeline Overview",
+                    html.Div("Department of Electricity Development · Live licensing pipeline overview",
                               className="site-header-subtitle"),
                 ]),
             ], className="d-flex align-items-center")),
@@ -612,8 +612,6 @@ app.layout = dbc.Container(fluid=True, children=[
                        href="https://doed.gov.np", target="_blank", className="d-block"),
                 html.A("Nepal Electricity Authority (NEA)",
                        href="https://nea.org.np", target="_blank", className="d-block"),
-                 html.A("Alternative Energy Promotion Centre (AEPC)",
-                       href="https://aepc.gov.np", target="_blank", className="d-block"),
             ]),
             dbc.Col(md=4, className="text-md-end", children=[
                 html.Div("👥 …visitors", id="visitor-counter", className="footer-visitor-counter"),
@@ -650,7 +648,14 @@ def handle_data_source(_init, _poll):
 
     types = [{"label": t, "value": t} for t in loader.get_types() if t != "Transmission Line"]
     statuses = [{"label": s, "value": s} for s in loader.get_statuses()]
-    provinces = [{"label": p, "value": p} for p in loader.get_provinces() if p != "Unspecified"]
+    # Province options come from the permanent GIS boundary layer (all 7 provinces),
+    # not just the provinces that happen to have a project in the current data —
+    # so the full administrative tree is always selectable.
+    if getattr(de.GIS, 'provinces_loaded', False):
+        province_names = sorted(de.GIS.provinces.keys())
+    else:
+        province_names = [p for p in loader.get_provinces() if p != "Unspecified"]
+    provinces = [{"label": p, "value": p} for p in province_names]
     y_lo, y_hi = loader.get_license_year_bounds()
     y_lo, y_hi = (y_lo or 2050), (y_hi or 2085)
 
@@ -689,14 +694,22 @@ def get_filtered_records(f_type, f_status, f_province, f_capacity, f_year, f_sea
     Input("refresh-poll", "n_intervals"),
 )
 def update_district_options(f_province, _status, _poll):
-    loader = STATE["loader"]
-    if loader is None or loader.error or not loader.records:
-        return []
-    dist_prov = {}
-    for r in loader.records:
-        d = r.get("district")
-        if d and d != "Unspecified" and d not in dist_prov:
-            dist_prov[d] = r.get("province")
+    # District options come from the permanent GIS boundary layer (all 77
+    # districts, mapped to their real province) rather than only districts
+    # that happen to have a project in the current data — so the full
+    # Province → District tree is always selectable, and picking a province
+    # narrows it to that province's real districts.
+    if getattr(de.GIS, 'loaded', False) and de.GIS.district_province:
+        dist_prov = dict(de.GIS.district_province)
+    else:
+        loader = STATE["loader"]
+        if loader is None or loader.error or not loader.records:
+            return []
+        dist_prov = {}
+        for r in loader.records:
+            d = r.get("district")
+            if d and d != "Unspecified" and d not in dist_prov:
+                dist_prov[d] = r.get("province")
     all_districts = sorted(dist_prov)
     if not f_province:
         opts = all_districts
@@ -1252,11 +1265,9 @@ def status_pie(recs, title):
 
 # ── OVERVIEW TAB ────────────────────────────────────────────────────────────
 def render_overview(loader, recs):
-    """Overview with Power Plant types flip-card + chart, then Province cards + charts."""
+    """Overview with Power Plant types flip-card + chart, then Province flip-card + chart."""
     card, fig = _flip_card_and_chart(0)
-
-    # Province section
-    prov_section = _render_overview_province_section(loader, recs)
+    prov_card, prov_fig = _overview_province_flip_card_and_chart(0)
 
     return html.Div([
         html.H5("⚡ Power Plants by Type", className="mb-3 mt-2"),
@@ -1266,58 +1277,88 @@ def render_overview(loader, recs):
         ], className="mb-4"),
         html.Hr(),
         html.H5("🗺️ Power Plants by Province", className="mb-3 mt-2"),
-        prov_section,
-    ])
-
-
-def _render_overview_province_section(loader, recs):
-    """Render province breakdown for overview tab."""
-    plant_recs = [r for r in recs if r["type"] != "Transmission Line"]
-    if not plant_recs:
-        return dbc.Alert("No power plant records available.", color="info")
-
-    prov_totals, prov_stages = compute_breakdown(plant_recs, "province")
-    provinces_present = [p for p in PROVINCE_DISPLAY_ORDER if p in prov_totals] +                         [p for p in prov_totals if p not in PROVINCE_DISPLAY_ORDER]
-
-    if not provinces_present:
-        return dbc.Alert("No province data available.", color="info")
-
-    # Build province cards in a row (2 per row)
-    card_rows = []
-    for i in range(0, len(provinces_present), 2):
-        row_cards = []
-        for p in provinces_present[i:i+2]:
-            bg_url = ss.get_province_bg_url(p)
-            color = get_province_colors().get(p, "#455a64")
-            card = render_category_card(
-                p, prov_stages[p], prov_totals[p][0], prov_totals[p][1],
-                bg_url, color, total_km=prov_totals[p][2],
-                stage_order=STAGE_DISPLAY_ORDER
-            )
-            row_cards.append(dbc.Col(card, md=6))
-        card_rows.append(dbc.Row(row_cards, className="mb-3"))
-
-    # Province bar chart
-    fig_prov = go.Figure(go.Bar(
-        x=provinces_present,
-        y=[prov_totals[p][1] for p in provinces_present],
-        marker_color=[get_province_colors().get(p, "#455a64") for p in provinces_present],
-        text=[f"{prov_totals[p][0]:,} Projects" for p in provinces_present],
-        textposition="outside",
-    ))
-    fig_prov.update_layout(
-        title="Power Plant Capacity by Province",
-        height=420, yaxis_title="Capacity (MW)",
-        margin=dict(l=10, r=10, t=40, b=10),
-    )
-    add_watermark(fig_prov)
-
-    return html.Div([
-        html.Div(card_rows),
         dbc.Row([
-            dbc.Col(dcc.Graph(figure=fig_prov), md=12),
-        ], className="mt-3"),
+            dbc.Col(html.Div(id="overview-province-flip-card", children=prov_card,
+                              style={"height": "360px"}), md=5),
+            dbc.Col(dcc.Graph(id="overview-province-flip-chart", figure=prov_fig,
+                               style={"height": "360px"}), md=7),
+        ], className="mb-4"),
     ])
+
+
+def _overview_province_flip_card_and_chart(n):
+    """Animated province flip card + chart for the Overview tab — cycles through
+    provinces the same way _flip_card_and_chart cycles through project types."""
+    loader = STATE["loader"]
+    empty_fig = go.Figure()
+    if loader is None or loader.error or not loader.records:
+        return None, empty_fig
+    try:
+        recs = [r for r in loader.records
+                if r["status"] not in de.EXTRA_STATUS_ORDER and r["type"] != "Transmission Line"]
+        if not recs:
+            return None, empty_fig
+
+        prov_totals, prov_stages = compute_breakdown(recs, "province")
+        provinces_present = [p for p in PROVINCE_DISPLAY_ORDER if p in prov_totals] + \
+                            [p for p in prov_totals if p not in PROVINCE_DISPLAY_ORDER]
+        if not provinces_present:
+            return None, empty_fig
+
+        p = provinces_present[n % len(provinces_present)]
+        bg_url = ss.get_province_bg_url(p)
+        color = get_province_colors().get(p, "#455a64")
+
+        card = render_category_card(
+            p, prov_stages[p], prov_totals[p][0], prov_totals[p][1],
+            bg_url, color, stage_order=STAGE_DISPLAY_ORDER
+        )
+
+        stages_present = [s for s in STAGE_DISPLAY_ORDER if s in prov_stages[p]]
+        colors = [get_status_colors().get(s, "#90a4ae") for s in stages_present]
+        fig = go.Figure(go.Bar(
+            x=stages_present,
+            y=[prov_stages[p][s][1] for s in stages_present],
+            marker_color=colors,
+            text=[f"{prov_stages[p][s][1]:,.1f} MW" for s in stages_present],
+            textposition="outside",
+        ))
+        fig.update_layout(
+            title=f"{p} — Capacity by License Stage",
+            height=360, yaxis_title="MW",
+            margin=dict(l=10, r=10, t=40, b=10),
+        )
+        if bg_url:
+            fig.update_layout(
+                images=[dict(
+                    source=bg_url, xref="paper", yref="paper",
+                    x=0, y=1, sizex=1, sizey=1, xanchor="left", yanchor="top",
+                    sizing="stretch", opacity=0.25, layer="below",
+                )],
+                plot_bgcolor="rgba(255,255,255,0.75)",
+                paper_bgcolor="rgba(0,0,0,0)",
+            )
+        add_watermark(fig)
+        return card, fig
+    except Exception:
+        tb = traceback.format_exc()
+        traceback.print_exc()
+        err_card = dbc.Alert([
+            html.Div("The Overview province card hit an error while rendering.",
+                      className="fw-semibold small"),
+            html.Pre(tb, className="small mt-1",
+                      style={"whiteSpace": "pre-wrap", "maxHeight": "280px", "overflowY": "auto"}),
+        ], color="danger")
+        return err_card, empty_fig
+
+
+@app.callback(
+    Output("overview-province-flip-card", "children"),
+    Output("overview-province-flip-chart", "figure"),
+    Input("province-flip-interval", "n_intervals"),
+)
+def flip_overview_province_card(n):
+    return _overview_province_flip_card_and_chart(n)
 
 
 def type_flip_chart_figure(t, stage_map, bg_url=None):
