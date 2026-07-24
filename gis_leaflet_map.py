@@ -191,7 +191,6 @@ def build_gis_map_html(records, status_colors, type_colors, province_colors, hei
       <label class="chk"><input type="checkbox" id="toggle-choropleth" checked> Province choropleth</label>
       <label class="chk"><input type="checkbox" id="toggle-district" checked> District boundaries</label>
       <label class="chk"><input type="checkbox" id="toggle-local"> Local body boundaries (753)</label>
-      <label class="chk"><input type="checkbox" id="toggle-claimed" checked> Limpiyadhura–Kalapani–Lipulekh (claimed area)</label>
       <label class="chk"><input type="checkbox" id="toggle-pa" checked> Protected areas (core)</label>
       <label class="chk"><input type="checkbox" id="toggle-buffer" checked> Buffer zones (1st-stage protection)</label>
       <button class="small" id="btn-reset">Reset filters</button>
@@ -207,7 +206,6 @@ def build_gis_map_html(records, status_colors, type_colors, province_colors, hei
       <div id="stage-legend"></div>
       <div class="legend-row" style="margin-top:6px;border-top:1px solid var(--border);padding-top:6px;"><span class="swatch" style="background:#e11d48;opacity:.55"></span> Protected area (core)</div>
       <div class="legend-row"><span class="swatch" style="background:#f59e0b;opacity:.35"></span> Buffer zone (1st-stage)</div>
-      <div class="legend-row"><span class="swatch" style="background:#22d3ee;opacity:.4"></span> Nepal-claimed area (disputed)</div>
     </div>
   </div>
   <div id="map"></div>
@@ -258,12 +256,9 @@ const localLayer = L.geoJSON(LOCALS_GEOJSON, {{
 }});
 
 // disputed/claimed area (Limpiyadhura-Kalapani-Lipulekh, per Nepal's 2020 official map)
+// Rendered on the map exactly as the other boundary layers are — no hover text.
 const claimedLayer = L.geoJSON(CLAIMED_AREA_GEOJSON, {{
-  style: () => ({{ color:'#22d3ee', weight:2, dashArray:'6,4', fillColor:'#22d3ee', fillOpacity:0.22 }}),
-  onEachFeature: (f, layer) => layer.bindTooltip(
-    `${{f.properties.name}}<br><i>Per Nepal's 2020 official map (disputed with India); not assigned to a local government unit.</i>`,
-    {{sticky:true, direction:'top'}}
-  )
+  style: () => ({{ color:'#22d3ee', weight:2, dashArray:'6,4', fillColor:'#22d3ee', fillOpacity:0.22 }})
 }}).addTo(map);
 const coreFeatures = PA_GEOJSON.features.filter(f => f.properties.category !== "Buffer Zone");
 const bufferFeatures = PA_GEOJSON.features.filter(f => f.properties.category === "Buffer Zone");
@@ -304,7 +299,6 @@ function popupHtml(p){{
       <tr><td class="k">District(s)</td><td>${{fmtPct(p.distpct)}}</td></tr>
       <tr><td class="k">Local Body(s)</td><td>${{fmtLB(p.lbpct)}}</td></tr>
       <tr><td class="k">Protected Zone</td><td>${{fmtPct(p.papct)}}</td></tr>
-      <tr><td class="k">Claimed Area</td><td>${{fmtPct(p.claimedpct)}}</td></tr>
       <tr><td class="k">Centroid WGS-84</td><td>${{p.c.lat}}, ${{p.c.lon}}</td></tr>
       <tr><td class="k">Extent WGS-84</td><td>${{p.bbox_wgs.s}}–${{p.bbox_wgs.n}} N, ${{p.bbox_wgs.w}}–${{p.bbox_wgs.e}} E</td></tr>
       <tr><td class="k">Extent Everest</td><td>${{p.bbox_ev_dms.s}}–${{p.bbox_ev_dms.n}} N, ${{p.bbox_ev_dms.w}}–${{p.bbox_ev_dms.e}} E<br>(${{p.bbox_ev_dd.s}}–${{p.bbox_ev_dd.n}}, ${{p.bbox_ev_dd.w}}–${{p.bbox_ev_dd.e}} dd)</td></tr>
@@ -388,9 +382,6 @@ document.getElementById('toggle-district').addEventListener('change', e=>{{
 }});
 document.getElementById('toggle-local').addEventListener('change', e=>{{
   if(e.target.checked) localLayer.addTo(map); else map.removeLayer(localLayer);
-}});
-document.getElementById('toggle-claimed').addEventListener('change', e=>{{
-  if(e.target.checked) claimedLayer.addTo(map); else map.removeLayer(claimedLayer);
 }});
 document.getElementById('toggle-pa').addEventListener('change', e=>{{
   if(e.target.checked) paCoreLayer.addTo(map); else map.removeLayer(paCoreLayer);
