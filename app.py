@@ -1164,7 +1164,7 @@ def build_ticker_segments(loader, recs=None):
             continue
         segs.append((_cat_segment(f"{icon} {tlabel} IN OPERATION", len(sel),
                                   sum(r['capacity_mw'] or 0 for r in sel)), "#a5f3c4"))
-                # Top 5 Provinces / Districts / Local Bodies by installed capacity
+        # Top 5 Provinces / Districts / Local Bodies by installed capacity
         # for this category — resolved from each project's own GIS boundary
         # overlap (province_pct/district_pct/local_pct), not the sheet's
         # raw address text which can be unreliable.
@@ -1203,7 +1203,7 @@ def build_ticker_segments(loader, recs=None):
     segs.append((_cat_segment(f"📅 Connected in {ty_-1} (full year)", len(last_full_year),
                               sum(r['capacity_mw'] or 0 for r in last_full_year)), "#ffe08a"))
 
-   yr_sel = cur_sel
+    yr_sel = cur_sel
     segs.append((_cat_segment(f"🆕 In operation since {ty_}-01-01", len(yr_sel),
                               sum(r['capacity_mw'] or 0 for r in yr_sel)), "#ffe08a"))
 
@@ -1933,7 +1933,7 @@ def render_plants_tab(loader, recs):
             html.Span(f"{stage_totals[st][1]:,.1f} MW", className="fw-semibold float-end"),
         ], className="d-flex justify-content-between border-bottom py-2"))
 
-      colors = [get_status_colors().get(s, "#90a4ae") for s in stages_present]
+    colors = [get_status_colors().get(s, "#90a4ae") for s in stages_present]
     mw_values = [stage_totals[s][1] for s in stages_present]
     cum_mw = _cumsum(mw_values)
     fig_stage = go.Figure()
@@ -1987,7 +1987,7 @@ def render_plants_tab(loader, recs):
     provinces_present = [p for p in PROVINCE_DISPLAY_ORDER if p in prov_totals] + \
                         [p for p in prov_totals if p not in PROVINCE_DISPLAY_ORDER]
 
-       prov_colors = [get_province_colors().get(p, "#455a64") for p in provinces_present]
+    prov_colors = [get_province_colors().get(p, "#455a64") for p in provinces_present]
     prov_mw_values = [prov_totals[p][1] for p in provinces_present]
     prov_cum_mw = _cumsum(prov_mw_values)
     fig_prov = go.Figure()
@@ -2135,7 +2135,7 @@ def render_transmission_tab(loader, recs):
             html.Span(f"{stage_totals[st][2]:,.1f} MW", className="fw-semibold float-end"),
         ], className="d-flex justify-content-between border-bottom py-2"))
 
-       colors = [get_status_colors().get(s, "#90a4ae") for s in stages_present]
+    colors = [get_status_colors().get(s, "#90a4ae") for s in stages_present]
     km_values = [stage_totals[s][1] for s in stages_present]
     cum_km = _cumsum(km_values)
     fig_stage = go.Figure()
@@ -2203,7 +2203,7 @@ def render_transmission_tab(loader, recs):
             html.Span(f"{by_volt[v][2]:,.1f} MW", className="fw-semibold float-end"),
         ], className="d-flex justify-content-between border-bottom py-2"))
 
-       volt_km_values = [by_volt[v][1] for v in volts]
+    volt_km_values = [by_volt[v][1] for v in volts]
     volt_cum_km = _cumsum(volt_km_values)
     fig_volt = go.Figure()
     fig_volt.add_trace(go.Bar(
@@ -2267,7 +2267,7 @@ def render_side_category_tab(loader, recs, status_value, page_title):
     by_type, _ = compute_breakdown(side_recs, "type")
     types = [t for t in de.TYPE_ORDER if t in by_type] + [t for t in by_type if t not in de.TYPE_ORDER]
     type_colors = [get_type_colors().get(t, "#607d8b") for t in types]
-        type_counts = [by_type[t][0] for t in types]
+    type_counts = [by_type[t][0] for t in types]
     cum_type_counts = _cumsum([float(c) for c in type_counts])
     fig_type = go.Figure()
     fig_type.add_trace(go.Bar(
@@ -2294,7 +2294,7 @@ def render_side_category_tab(loader, recs, status_value, page_title):
     by_prov, _ = compute_breakdown(side_recs, "province")
     provs = [p for p in PROVINCE_DISPLAY_ORDER if p in by_prov] + [p for p in by_prov if p not in PROVINCE_DISPLAY_ORDER]
     prov_colors = [get_province_colors().get(p, "#455a64") for p in provs]
-        prov_counts = [by_prov[p][0] for p in provs]
+    prov_counts = [by_prov[p][0] for p in provs]
     cum_prov_counts = _cumsum([float(c) for c in prov_counts])
     fig_prov = go.Figure()
     fig_prov.add_trace(go.Bar(
@@ -2391,7 +2391,7 @@ def render_growth(loader, recs):
     tx_years = sorted(tx_series.keys())
     all_tx_statuses = sorted({k for y in tx_years for k in tx_series[y].keys()})
 
-        fig_tx_cap = go.Figure()
+    fig_tx_cap = go.Figure()
     for st in all_tx_statuses:
         fig_tx_cap.add_trace(go.Scatter(
             x=[str(y) for y in tx_years],
@@ -2543,7 +2543,7 @@ def render_compare(loader, recs):
     for r in lines:
         if r["voltage_kv"]:
             by_volt[r["voltage_kv"]] += 1
-        volt_keys = sorted(by_volt)
+    volt_keys = sorted(by_volt)
     volt_vals = [by_volt[v] for v in volt_keys]
     cum_volt_vals = _cumsum([float(c) for c in volt_vals])
     fig_volt = go.Figure()
