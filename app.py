@@ -1203,11 +1203,13 @@ def build_ticker_segments(loader, recs=None):
     segs.append((_cat_segment(f"📅 Connected in {ty_-1} (full year)", len(last_full_year),
                               sum(r['capacity_mw'] or 0 for r in last_full_year)), "#ffe08a"))
 
-    yr_sel = cur_sel
+   yr_sel = cur_sel
     segs.append((_cat_segment(f"🆕 In operation since {ty_}-01-01", len(yr_sel),
                               sum(r['capacity_mw'] or 0 for r in yr_sel)), "#ffe08a"))
 
-      for r in largest_this_year:
+    largest_this_year = sorted(cur_sel, key=lambda r: r["capacity_mw"] or 0, reverse=True)[:1]
+    largest_ids = {id(r) for r in largest_this_year}
+    for r in largest_this_year:
         prov_pct = r.get("province_pct") or {}
         dist_pct = r.get("district_pct") or {}
         local_pct = r.get("local_pct") or []
