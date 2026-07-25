@@ -1207,23 +1207,35 @@ def build_ticker_segments(loader, recs=None):
     segs.append((_cat_segment(f"🆕 In operation since {ty_}-01-01", len(yr_sel),
                               sum(r['capacity_mw'] or 0 for r in yr_sel)), "#ffe08a"))
 
-    largest_this_year = sorted(cur_sel, key=lambda r: r["capacity_mw"] or 0, reverse=True)[:1]
-    largest_ids = {id(r) for r in largest_this_year}
-       for r in largest_this_year:
-        prov_pct = r.get("province_pct") or {}
-        dist_pct = r.get("district_pct") or {}
-        local_pct = r.get("local_pct") or []
-        provs = [p for p, _ in sorted(prov_pct.items(), key=lambda kv: -kv[1])] if prov_pct else [r.get("province")]
-        dists = [d for d, _ in sorted(dist_pct.items(), key=lambda kv: -kv[1])] if dist_pct else [r.get("district")]
-        locals_ = [lb["name"] for lb in sorted(local_pct, key=lambda lb: -(lb.get("pct") or 0))] if local_pct else [de.record_local(r)]
-        prov_str = ", ".join(p for p in provs if p and p != "Unspecified") or "—"
-        dist_str = ", ".join(d for d in dists if d and d != "Unspecified") or "—"
-        local_str = ", ".join(l for l in locals_ if l and l != "Unspecified") or "—"
-        segs.append((f"🏆 LARGEST CONNECTED {ty_}: {r['project'][:40]} | "
-                     f"Capacity: {de.fmt_mw(r['capacity_mw'])} MW | "
-                     f"Promoter: {textwrap.shorten(r['promoter'] or '—', 30)} | "
-                     f"Province: {prov_str} | District: {dist_str} | Local Body: {local_str} | "
-                     f"Connected: {de.bs_str(r['cod_bs'])}", "#7be3a2"))
+   largest_this_year = sorted(
+    cur_sel,
+    key=lambda r: r["capacity_mw"] or 0,
+    reverse=True
+)[:1]
+
+largest_ids = {id(r) for r in largest_this_year}
+
+for r in largest_this_year:
+    prov_pct = r.get("province_pct") or {}
+    dist_pct = r.get("district_pct") or {}
+    local_pct = r.get("local_pct") or []
+
+    provs = [p for p, _ in sorted(prov_pct.items(), key=lambda kv: -kv[1])] if prov_pct else [r.get("province")]
+    dists = [d for d, _ in sorted(dist_pct.items(), key=lambda kv: -kv[1])] if dist_pct else [r.get("district")]
+    locals_ = [lb["name"] for lb in sorted(local_pct, key=lambda lb: -(lb.get("pct") or 0))] if local_pct else [de.record_local(r)]
+
+    prov_str = ", ".join(p for p in provs if p and p != "Unspecified") or "—"
+    dist_str = ", ".join(d for d in dists if d and d != "Unspecified") or "—"
+    local_str = ", ".join(l for l in locals_ if l and l != "Unspecified") or "—"
+
+    segs.append((
+        f"🏆 LARGEST CONNECTED {ty_}: {r['project'][:40]} | "
+        f"Capacity: {de.fmt_mw(r['capacity_mw'])} MW | "
+        f"Promoter: {textwrap.shorten(r['promoter'] or '—', 30)} | "
+        f"Province: {prov_str} | District: {dist_str} | Local Body: {local_str} | "
+        f"Connected: {de.bs_str(r['cod_bs'])}",
+        "#7be3a2"
+    ))
 
     latest_candidates = sorted([r for r in cur_sel if _cod_key(r)], key=_cod_key, reverse=True)
     latest = [r for r in latest_candidates if id(r) not in largest_ids][:1]
