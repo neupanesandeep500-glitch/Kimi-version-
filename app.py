@@ -1469,21 +1469,21 @@ def status_pie(recs, title):
 
 
 # ── OVERVIEW TAB ────────────────────────────────────────────────────────────
-def type_flip_chart_figure(t, stage_map, bg_url=None, y_max=None):
+def type_flip_chart_figure(t, stage_map, bg_url=None):
     """Chart figure for the type flip card — shows THIS type's own
     stage breakdown, so it flips in sync with the card instead of
     staying constant. bg_url is accepted for call-site compatibility
     but not drawn here.
 
     Stable-axis fix: every flip used to redraw with only the stages
-    that type actually has, and let Plotly auto-scale the y-axis to
-    that type's own max — so both the x categories and the y range
-    jumped on every tick, making the chart look like it was
-    re-plotting from scratch. Now the x-axis always carries the full
-    STAGE_DISPLAY_ORDER (0-value bars for stages this type has none
-    of) and the y-axis uses a fixed range shared across every type
-    (y_max, the largest single-stage value across ALL types) so only
-    the bar heights change between flips, not the axes themselves."""
+    that type actually has, so the x categories themselves jumped
+    around (bars appearing/disappearing/reordering) on every tick.
+    The x-axis now always carries the full STAGE_DISPLAY_ORDER
+    (0-value bars for stages this type has none of), so that part
+    stays fixed across flips. The y-axis, however, is scaled to
+    THIS type's own data (not a value shared across every type) —
+    each type gets headroom sized to its own max, so a small type
+    like Solar isn't flattened by Hydro's much larger scale."""
     use_km = (t == "Transmission Line")
     idx = 2 if use_km else 1
     unit = "KM" if use_km else "MW"
@@ -1495,12 +1495,12 @@ def type_flip_chart_figure(t, stage_map, bg_url=None, y_max=None):
         marker_color=colors,
         text=[f"{v:,.1f} {unit}" if v else "" for v in yvals], textposition="outside",
     ))
-    fixed_range = [0, y_max * 1.15] if y_max else None
+    own_max = max(yvals, default=0) or 1
     layout_kwargs = dict(
         title=f"{t} — {'Length (KM)' if use_km else 'Capacity (MW)'} by License Stage",
         height=360, yaxis_title=unit, margin=dict(l=10, r=10, t=40, b=10),
         xaxis=dict(categoryorder="array", categoryarray=STAGE_DISPLAY_ORDER),
-        yaxis=dict(range=fixed_range, autorange=False if fixed_range else True),
+        yaxis=dict(range=[0, own_max * 1.15], autorange=False),
         **_FLIP_PANEL_CHART_KWARGS,
     )
     fig.update_layout(**layout_kwargs)
@@ -1508,12 +1508,12 @@ def type_flip_chart_figure(t, stage_map, bg_url=None, y_max=None):
     return fig
 
 
-def province_flip_chart_figure(p, stage_map, y_max=None):
+def province_flip_chart_figure(p, stage_map):
     """Chart figure for the province flip card — shows THIS province's
-    own stage breakdown, flipping in sync with the card. Same
-    stable-axis fix as type_flip_chart_figure: fixed x categories
-    (full STAGE_DISPLAY_ORDER) and a fixed y-axis range shared across
-    every province, so flipping only changes bar heights."""
+    own stage breakdown, flipping in sync with the card. Same fixed
+    x-categories as type_flip_chart_figure, but the y-axis is scaled
+    to THIS province's own data rather than a value shared across
+    every province."""
     colors = [get_status_colors().get(s, "#90a4ae") for s in STAGE_DISPLAY_ORDER]
     yvals = [stage_map.get(s, [0, 0.0, 0.0])[1] for s in STAGE_DISPLAY_ORDER]
     fig = go.Figure(go.Bar(
@@ -1521,16 +1521,17 @@ def province_flip_chart_figure(p, stage_map, y_max=None):
         marker_color=colors,
         text=[f"{v:,.1f} MW" if v else "" for v in yvals], textposition="outside",
     ))
-    fixed_range = [0, y_max * 1.15] if y_max else None
+    own_max = max(yvals, default=0) or 1
     fig.update_layout(
         title=f"{p} — Capacity (MW) by License Stage", height=360,
         yaxis_title="MW", margin=dict(l=10, r=10, t=40, b=10),
         xaxis=dict(categoryorder="array", categoryarray=STAGE_DISPLAY_ORDER),
-        yaxis=dict(range=fixed_range, autorange=False if fixed_range else True),
+        yaxis=dict(range=[0, own_max * 1.15], autorange=False),
         **_FLIP_PANEL_CHART_KWARGS,
     )
     add_watermark(fig)
     return fig
+
 
 
 def render_overview(loader, recs):
@@ -1593,16 +1594,11 @@ def _overview_province_flip_card_only(n):
         bg_url = ss.get_province_bg_url(p)
         color = get_province_colors().get(p, "#455a64")
 
-        # Fixed y-axis ceiling shared by every province's chart (the
-        # largest single-stage MW value seen anywhere) so the axis
-        # itself never moves when the card flips — only the bars do.
-        y_max = max((v[1] for stages in prov_stages.values() for v in stages.values()), default=0)
-
         card = render_category_card(
             p, prov_stages[p], prov_totals[p][0], prov_totals[p][1],
             bg_url, color, stage_order=STAGE_DISPLAY_ORDER
         )
-        fig = province_flip_chart_figure(p, prov_stages[p], y_max=y_max)
+        fig = province_flip_chart_figure(p, prov_stages[p])
         return card, bg_url, fig
     except Exception:
         tb = traceback.format_exc()
@@ -1650,11 +1646,7 @@ def _flip_card_only(n):
         card = render_category_card(t, stages[t], totals[t][0], totals[t][1],
                                      bg_url, get_type_colors().get(t, "#607d8b"),
                                      total_km=totals[t][2], stage_order=STAGE_DISPLAY_ORDER)
-        # Fixed y-axis ceiling shared by every type's chart (Transmission
-        # Line is already excluded above, so this is MW throughout) so
-        # the axis itself never moves when the card flips.
-        y_max = max((v[1] for st in stages.values() for v in st.values()), default=0)
-        fig = type_flip_chart_figure(t, stages[t], bg_url, y_max=y_max)
+        fig = type_flip_chart_figure(t, stages[t], bg_url)
         return card, bg_url, fig
     except Exception:
         tb = traceback.format_exc()
