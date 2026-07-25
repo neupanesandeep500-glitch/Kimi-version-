@@ -1224,7 +1224,6 @@ def build_ticker_segments(loader, recs=None):
                      f"Promoter: {textwrap.shorten(r['promoter'] or '—', 30)} | "
                      f"Province: {prov_str} | District: {dist_str} | Local Body: {local_str} | "
                      f"Connected: {de.bs_str(r['cod_bs'])}", "#7be3a2"))
-    ))
 
     latest_candidates = sorted([r for r in cur_sel if _cod_key(r)], key=_cod_key, reverse=True)
     latest = [r for r in latest_candidates if id(r) not in largest_ids][:1]
