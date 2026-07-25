@@ -1111,13 +1111,16 @@ def _category_admin_totals(sel):
     return prov_totals, dist_totals, local_totals
 
 
-def _fmt_admin_all(totals):
+def _fmt_admin_all(totals, top_n=None):
     """Every admin unit present, ordered by capacity — the marquee's
     scroll speed already scales to content length, so listing all of
-    them (rather than only the top one) doesn't need a hard cap."""
+    them (rather than only the top one) doesn't need a hard cap.
+    When top_n is set, only the top N entries are returned."""
     if not totals:
         return None
     ordered = sorted(totals.items(), key=lambda kv: -kv[1])
+    if top_n:
+        ordered = ordered[:top_n]
     return ", ".join(f"{name} ({mw:,.0f} MW)" for name, mw in ordered)
 
 
@@ -1161,18 +1164,14 @@ def build_ticker_segments(loader, recs=None):
             continue
         segs.append((_cat_segment(f"{icon} {tlabel} IN OPERATION", len(sel),
                                   sum(r['capacity_mw'] or 0 for r in sel)), "#a5f3c4"))
-        # Every Province / District / Local Body this category touches —
-        # resolved from each project's own GIS boundary overlap
-        # (province_pct/district_pct/local_pct, computed against the real
-        # Survey Dept polygons from the project's surveyed lat/long
-        # coordinates), not the sheet's own address text, which can be
-        # blank, misspelled, or otherwise unreliable. Falls back to the
-        # sheet/point-in-polygon fields only for records with no overlap
-        # data on file.
+                # Top 5 Provinces / Districts / Local Bodies by installed capacity
+        # for this category — resolved from each project's own GIS boundary
+        # overlap (province_pct/district_pct/local_pct), not the sheet's
+        # raw address text which can be unreliable.
         prov_t, dist_t, local_t = _category_admin_totals(sel)
-        for lab, totals in (("Provinces", prov_t), ("Districts", dist_t),
-                            ("Local Bodies", local_t)):
-            txt = _fmt_admin_all(totals)
+        for lab, totals in (("Top 5 Provinces", prov_t), ("Top 5 Districts", dist_t),
+                            ("Top 5 Local Bodies", local_t)):
+            txt = _fmt_admin_all(totals, top_n=5)
             if txt:
                 segs.append((f"{icon} {tlabel} {lab}: {txt}", "#7be3a2"))
 
@@ -1210,10 +1209,21 @@ def build_ticker_segments(loader, recs=None):
 
     largest_this_year = sorted(cur_sel, key=lambda r: r["capacity_mw"] or 0, reverse=True)[:1]
     largest_ids = {id(r) for r in largest_this_year}
-    for r in largest_this_year:
-        segs.append((f"🏆 Largest plant connected in {ty_}: {r['project'][:34]} — "
-                     f"{de.fmt_mw(r['capacity_mw'])} MW • {_admin_units_str(r, max_each=None)} • "
-                     f"COD {de.bs_str(r['cod_bs'])}", "#7be3a2"))
+       for r in largest_this_year:
+        prov_pct = r.get("province_pct") or {}
+        dist_pct = r.get("district_pct") or {}
+        local_pct = r.get("local_pct") or []
+        provs = [p for p, _ in sorted(prov_pct.items(), key=lambda kv: -kv[1])] if prov_pct else [r.get("province")]
+        dists = [d for d, _ in sorted(dist_pct.items(), key=lambda kv: -kv[1])] if dist_pct else [r.get("district")]
+        locals_ = [lb["name"] for lb in sorted(local_pct, key=lambda lb: -(lb.get("pct") or 0))] if local_pct else [de.record_local(r)]
+        prov_str = ", ".join(p for p in provs if p and p != "Unspecified") or "—"
+        dist_str = ", ".join(d for d in dists if d and d != "Unspecified") or "—"
+        local_str = ", ".join(l for l in locals_ if l and l != "Unspecified") or "—"
+        segs.append((f"🏆 LARGEST CONNECTED {ty_}: {r['project'][:40]} | "
+                     f"Capacity: {de.fmt_mw(r['capacity_mw'])} MW | "
+                     f"Promoter: {textwrap.shorten(r['promoter'] or '—', 30)} | "
+                     f"Province: {prov_str} | District: {dist_str} | Local Body: {local_str} | "
+                     f"Connected: {de.bs_str(r['cod_bs'])}", "#7be3a2"))
 
     latest_candidates = sorted([r for r in cur_sel if _cod_key(r)], key=_cod_key, reverse=True)
     latest = [r for r in latest_candidates if id(r) not in largest_ids][:1]
@@ -1483,30 +1493,44 @@ def type_flip_chart_figure(t, stage_map, bg_url=None):
     stays fixed across flips. The y-axis, however, is scaled to
     THIS type's own data (not a value shared across every type) —
     each type gets headroom sized to its own max, so a small type
-    like Solar isn't flattened by Hydro's much larger scale."""
+    like Solar isn't flattened by Hydro's much larger scale.
+    Includes cumulative line on secondary axis."""
     use_km = (t == "Transmission Line")
     idx = 2 if use_km else 1
     unit = "KM" if use_km else "MW"
     colors = [get_status_colors().get(s, "#90a4ae") for s in STAGE_DISPLAY_ORDER]
     yvals = [stage_map.get(s, [0, 0.0, 0.0])[idx] for s in STAGE_DISPLAY_ORDER]
+    cum_vals = _cumsum(yvals)
 
-    fig = go.Figure(go.Bar(
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
         x=STAGE_DISPLAY_ORDER, y=yvals,
         marker_color=colors,
         text=[f"{v:,.1f} {unit}" if v else "" for v in yvals], textposition="outside",
+        name=unit, width=0.5,
+    ))
+    fig.add_trace(go.Scatter(
+        x=STAGE_DISPLAY_ORDER, y=cum_vals, mode="lines+markers",
+        name=f"Cumulative {unit}", yaxis="y2",
+        line=dict(color="#37474f", width=3, dash="dot"),
+        marker=dict(size=7),
     ))
     own_max = max(yvals, default=0) or 1
+    cum_max = max(cum_vals, default=0) or 1
     layout_kwargs = dict(
         title=f"{t} — {'Length (KM)' if use_km else 'Capacity (MW)'} by License Stage",
-        height=360, yaxis_title=unit, margin=dict(l=10, r=10, t=40, b=10),
+        height=360, yaxis_title=unit,
+        yaxis2=dict(title=f"Cumulative {unit}", overlaying="y", side="right",
+                     showgrid=False, range=[0, cum_max * 1.15]),
+        margin=dict(l=10, r=10, t=40, b=10),
         xaxis=dict(categoryorder="array", categoryarray=STAGE_DISPLAY_ORDER),
         yaxis=dict(range=[0, own_max * 1.15], autorange=False),
+        legend=dict(orientation="h", y=-0.18),
         **_FLIP_PANEL_CHART_KWARGS,
     )
     fig.update_layout(**layout_kwargs)
     add_watermark(fig)
     return fig
-
 
 def province_flip_chart_figure(p, stage_map):
     """Chart figure for the province flip card — shows THIS province's
@@ -1743,7 +1767,8 @@ def render_single_stage_card(stage, sel_recs, bg_url, base_color, is_transmissio
 
 def stage_province_chart_figure(stage, sel_recs, is_transmission=False, bg_url=None):
     """bg_url is accepted for call-site compatibility but no longer drawn
-    here — the shared flip frame around the card+chart pair carries it."""
+    here — the shared flip frame around the card+chart pair carries it.
+    Includes cumulative line on secondary axis."""
     prov_totals = defaultdict(lambda: [0, 0.0, 0.0])
     for r in sel_recs:
         p = r["province"] or "Unspecified"
@@ -1755,22 +1780,34 @@ def stage_province_chart_figure(stage, sel_recs, is_transmission=False, bg_url=N
     idx = 2 if is_transmission else 1
     unit = "KM" if is_transmission else "MW"
     yvals = [prov_totals[p][idx] for p in provinces_present]
+    cum_vals = _cumsum(yvals)
     colors = [get_province_colors().get(p, "#455a64") for p in provinces_present]
 
-    fig = go.Figure(go.Bar(
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
         x=provinces_present, y=yvals,
         marker_color=colors,
         text=[f"{v:,.1f} {unit}" for v in yvals], textposition="outside",
+        name=f"{unit}", width=0.5,
+    ))
+    fig.add_trace(go.Scatter(
+        x=provinces_present, y=cum_vals, mode="lines+markers",
+        name=f"Cumulative {unit}", yaxis="y2",
+        line=dict(color="#37474f", width=3, dash="dot"),
+        marker=dict(size=8),
     ))
     layout_kwargs = dict(
         title=f"{stage} — {'Length (KM)' if is_transmission else 'Capacity (MW)'} by Province",
-        height=360, yaxis_title=unit, margin=dict(l=10, r=10, t=40, b=10),
+        height=360, yaxis_title=unit,
+        yaxis2=dict(title=f"Cumulative {unit}", overlaying="y", side="right",
+                     showgrid=False, range=[0, max(cum_vals, default=0) * 1.15 if cum_vals else 1]),
+        margin=dict(l=10, r=10, t=40, b=10),
+        legend=dict(orientation="h", y=-0.18),
         **_FLIP_PANEL_CHART_KWARGS,
     )
     fig.update_layout(**layout_kwargs)
     add_watermark(fig)
     return fig
-
 
 def _stage_flip_card_and_chart(n, recs, is_transmission=False):
     """Returns (card, fig, bg_url) — bg_url is applied once by the caller's
@@ -1896,14 +1933,30 @@ def render_plants_tab(loader, recs):
             html.Span(f"{stage_totals[st][1]:,.1f} MW", className="fw-semibold float-end"),
         ], className="d-flex justify-content-between border-bottom py-2"))
 
-    colors = [get_status_colors().get(s, "#90a4ae") for s in stages_present]
-    fig_stage = go.Figure(go.Bar(
-        x=stages_present, y=[stage_totals[s][1] for s in stages_present],
+      colors = [get_status_colors().get(s, "#90a4ae") for s in stages_present]
+    mw_values = [stage_totals[s][1] for s in stages_present]
+    cum_mw = _cumsum(mw_values)
+    fig_stage = go.Figure()
+    fig_stage.add_trace(go.Bar(
+        x=stages_present, y=mw_values,
         marker_color=colors,
-        text=[f"{stage_totals[s][1]:,.0f} MW" for s in stages_present], textposition="outside",
+        text=[f"{v:,.0f} MW" for v in mw_values], textposition="outside",
+        name="Capacity (MW)", width=0.5,
     ))
-    fig_stage.update_layout(title="Power Plants — Capacity (MW) by License Stage", height=420,
-                             yaxis_title="MW", margin=dict(l=10, r=10, t=40, b=10))
+    fig_stage.add_trace(go.Scatter(
+        x=stages_present, y=cum_mw, mode="lines+markers",
+        name="Cumulative Capacity", yaxis="y2",
+        line=dict(color="#37474f", width=3, dash="dot"),
+        marker=dict(size=8),
+    ))
+    fig_stage.update_layout(
+        title="Power Plants — Capacity (MW) by License Stage",
+        height=420, yaxis_title="Capacity (MW)",
+        yaxis2=dict(title="Cumulative Capacity (MW)", overlaying="y", side="right",
+                     showgrid=False, range=[0, max(cum_mw) * 1.15 if cum_mw else 1]),
+        margin=dict(l=10, r=10, t=40, b=10),
+        legend=dict(orientation="h", y=-0.15),
+    )
     add_watermark(fig_stage)
 
     # Stage flip card (animated card only) + static full stage-breakdown
@@ -1934,14 +1987,30 @@ def render_plants_tab(loader, recs):
     provinces_present = [p for p in PROVINCE_DISPLAY_ORDER if p in prov_totals] + \
                         [p for p in prov_totals if p not in PROVINCE_DISPLAY_ORDER]
 
-    prov_colors = [get_province_colors().get(p, "#455a64") for p in provinces_present]
-    fig_prov = go.Figure(go.Bar(
-        x=provinces_present, y=[prov_totals[p][1] for p in provinces_present],
+       prov_colors = [get_province_colors().get(p, "#455a64") for p in provinces_present]
+    prov_mw_values = [prov_totals[p][1] for p in provinces_present]
+    prov_cum_mw = _cumsum(prov_mw_values)
+    fig_prov = go.Figure()
+    fig_prov.add_trace(go.Bar(
+        x=provinces_present, y=prov_mw_values,
         marker_color=prov_colors,
         text=[f"{prov_totals[p][0]:,} Projects" for p in provinces_present], textposition="outside",
+        name="Capacity (MW)", width=0.5,
     ))
-    fig_prov.update_layout(title="Power Plant Capacity by Province", height=460,
-                            yaxis_title="Capacity (MW)", margin=dict(l=10, r=10, t=40, b=10))
+    fig_prov.add_trace(go.Scatter(
+        x=provinces_present, y=prov_cum_mw, mode="lines+markers",
+        name="Cumulative Capacity", yaxis="y2",
+        line=dict(color="#37474f", width=3, dash="dot"),
+        marker=dict(size=8),
+    ))
+    fig_prov.update_layout(
+        title="Power Plant Capacity by Province", height=460,
+        yaxis_title="Capacity (MW)",
+        yaxis2=dict(title="Cumulative Capacity (MW)", overlaying="y", side="right",
+                     showgrid=False, range=[0, max(prov_cum_mw) * 1.15 if prov_cum_mw else 1]),
+        margin=dict(l=10, r=10, t=40, b=10),
+        legend=dict(orientation="h", y=-0.15),
+    )
     add_watermark(fig_prov)
 
     # Province flip card (animated card only) — the chart alongside it is
@@ -2066,14 +2135,30 @@ def render_transmission_tab(loader, recs):
             html.Span(f"{stage_totals[st][2]:,.1f} MW", className="fw-semibold float-end"),
         ], className="d-flex justify-content-between border-bottom py-2"))
 
-    colors = [get_status_colors().get(s, "#90a4ae") for s in stages_present]
-    fig_stage = go.Figure(go.Bar(
-        x=stages_present, y=[stage_totals[s][1] for s in stages_present],
+       colors = [get_status_colors().get(s, "#90a4ae") for s in stages_present]
+    km_values = [stage_totals[s][1] for s in stages_present]
+    cum_km = _cumsum(km_values)
+    fig_stage = go.Figure()
+    fig_stage.add_trace(go.Bar(
+        x=stages_present, y=km_values,
         marker_color=colors,
-        text=[f"{stage_totals[s][1]:,.0f} KM" for s in stages_present], textposition="outside",
+        text=[f"{v:,.0f} KM" for v in km_values], textposition="outside",
+        name="Length (KM)", width=0.5,
     ))
-    fig_stage.update_layout(title="Transmission Lines — Length (KM) by License Stage", height=420,
-                             yaxis_title="KM", margin=dict(l=10, r=10, t=40, b=10))
+    fig_stage.add_trace(go.Scatter(
+        x=stages_present, y=cum_km, mode="lines+markers",
+        name="Cumulative Length", yaxis="y2",
+        line=dict(color="#37474f", width=3, dash="dot"),
+        marker=dict(size=8),
+    ))
+    fig_stage.update_layout(
+        title="Transmission Lines — Length (KM) by License Stage",
+        height=420, yaxis_title="Length (KM)",
+        yaxis2=dict(title="Cumulative Length (KM)", overlaying="y", side="right",
+                     showgrid=False, range=[0, max(cum_km) * 1.15 if cum_km else 1]),
+        margin=dict(l=10, r=10, t=40, b=10),
+        legend=dict(orientation="h", y=-0.15),
+    )
     add_watermark(fig_stage)
 
     # REQ 9: No flipping when filter is applied in Transmission tab
@@ -2118,12 +2203,28 @@ def render_transmission_tab(loader, recs):
             html.Span(f"{by_volt[v][2]:,.1f} MW", className="fw-semibold float-end"),
         ], className="d-flex justify-content-between border-bottom py-2"))
 
-    fig_volt = go.Figure(go.Bar(
-        x=[f"{v:.0f} kV" for v in volts], y=[by_volt[v][1] for v in volts],
+       volt_km_values = [by_volt[v][1] for v in volts]
+    volt_cum_km = _cumsum(volt_km_values)
+    fig_volt = go.Figure()
+    fig_volt.add_trace(go.Bar(
+        x=[f"{v:.0f} kV" for v in volts], y=volt_km_values,
         marker_color="#6a1b9a", text=[by_volt[v][0] for v in volts], textposition="outside",
+        name="Length (KM)", width=0.5,
     ))
-    fig_volt.update_layout(title="Length (KM) by Voltage Class", height=420,
-                            yaxis_title="KM", margin=dict(l=10, r=10, t=40, b=10))
+    fig_volt.add_trace(go.Scatter(
+        x=[f"{v:.0f} kV" for v in volts], y=volt_cum_km, mode="lines+markers",
+        name="Cumulative Length", yaxis="y2",
+        line=dict(color="#37474f", width=3, dash="dot"),
+        marker=dict(size=8),
+    ))
+    fig_volt.update_layout(
+        title="Length (KM) by Voltage Class", height=420,
+        yaxis_title="Length (KM)",
+        yaxis2=dict(title="Cumulative Length (KM)", overlaying="y", side="right",
+                     showgrid=False, range=[0, max(volt_cum_km) * 1.15 if volt_cum_km else 1]),
+        margin=dict(l=10, r=10, t=40, b=10),
+        legend=dict(orientation="h", y=-0.15),
+    )
     add_watermark(fig_volt)
 
     volt_section = dbc.Row([
@@ -2166,23 +2267,55 @@ def render_side_category_tab(loader, recs, status_value, page_title):
     by_type, _ = compute_breakdown(side_recs, "type")
     types = [t for t in de.TYPE_ORDER if t in by_type] + [t for t in by_type if t not in de.TYPE_ORDER]
     type_colors = [get_type_colors().get(t, "#607d8b") for t in types]
-    fig_type = go.Figure(go.Bar(
-        x=types, y=[by_type[t][0] for t in types], marker_color=type_colors,
-        text=[f"{by_type[t][0]:,} Projects" for t in types], textposition="outside",
+        type_counts = [by_type[t][0] for t in types]
+    cum_type_counts = _cumsum([float(c) for c in type_counts])
+    fig_type = go.Figure()
+    fig_type.add_trace(go.Bar(
+        x=types, y=type_counts, marker_color=type_colors,
+        text=[f"{c:,} Projects" for c in type_counts], textposition="outside",
+        name="Projects", width=0.5,
     ))
-    fig_type.update_layout(title=f"{page_title} — Count by Project Type", height=380,
-                            yaxis_title="Number of projects", margin=dict(l=10, r=10, t=40, b=10))
+    fig_type.add_trace(go.Scatter(
+        x=types, y=cum_type_counts, mode="lines+markers",
+        name="Cumulative Projects", yaxis="y2",
+        line=dict(color="#37474f", width=3, dash="dot"),
+        marker=dict(size=8),
+    ))
+    fig_type.update_layout(
+        title=f"{page_title} — Count by Project Type", height=380,
+        yaxis_title="Number of projects",
+        yaxis2=dict(title="Cumulative Projects", overlaying="y", side="right",
+                     showgrid=False, range=[0, max(cum_type_counts) * 1.15 if cum_type_counts else 1]),
+        margin=dict(l=10, r=10, t=40, b=10),
+        legend=dict(orientation="h", y=-0.15),
+    )
     add_watermark(fig_type)
 
     by_prov, _ = compute_breakdown(side_recs, "province")
     provs = [p for p in PROVINCE_DISPLAY_ORDER if p in by_prov] + [p for p in by_prov if p not in PROVINCE_DISPLAY_ORDER]
     prov_colors = [get_province_colors().get(p, "#455a64") for p in provs]
-    fig_prov = go.Figure(go.Bar(
-        x=provs, y=[by_prov[p][0] for p in provs], marker_color=prov_colors,
-        text=[f"{by_prov[p][0]:,} Projects" for p in provs], textposition="outside",
+        prov_counts = [by_prov[p][0] for p in provs]
+    cum_prov_counts = _cumsum([float(c) for c in prov_counts])
+    fig_prov = go.Figure()
+    fig_prov.add_trace(go.Bar(
+        x=provs, y=prov_counts, marker_color=prov_colors,
+        text=[f"{c:,} Projects" for c in prov_counts], textposition="outside",
+        name="Projects", width=0.5,
     ))
-    fig_prov.update_layout(title=f"{page_title} — Count by Province", height=380,
-                            yaxis_title="Number of projects", margin=dict(l=10, r=10, t=40, b=10))
+    fig_prov.add_trace(go.Scatter(
+        x=provs, y=cum_prov_counts, mode="lines+markers",
+        name="Cumulative Projects", yaxis="y2",
+        line=dict(color="#37474f", width=3, dash="dot"),
+        marker=dict(size=8),
+    ))
+    fig_prov.update_layout(
+        title=f"{page_title} — Count by Province", height=380,
+        yaxis_title="Number of projects",
+        yaxis2=dict(title="Cumulative Projects", overlaying="y", side="right",
+                     showgrid=False, range=[0, max(cum_prov_counts) * 1.15 if cum_prov_counts else 1]),
+        margin=dict(l=10, r=10, t=40, b=10),
+        legend=dict(orientation="h", y=-0.15),
+    )
     add_watermark(fig_prov)
 
     return html.Div([
@@ -2258,7 +2391,7 @@ def render_growth(loader, recs):
     tx_years = sorted(tx_series.keys())
     all_tx_statuses = sorted({k for y in tx_years for k in tx_series[y].keys()})
 
-    fig_tx_cap = go.Figure()
+        fig_tx_cap = go.Figure()
     for st in all_tx_statuses:
         fig_tx_cap.add_trace(go.Scatter(
             x=[str(y) for y in tx_years],
@@ -2266,9 +2399,19 @@ def render_growth(loader, recs):
             mode="lines+markers", name=st,
             line=dict(color=get_status_colors().get(st, "#90a4ae")),
         ))
+    # Cumulative total transmission capacity across all statuses
+    tx_totals_by_year = [sum(tx_series[y].get(st, [0, 0.0])[1] for st in all_tx_statuses) for y in tx_years]
+    tx_cum_capacity = _cumsum(tx_totals_by_year)
+    fig_tx_cap.add_trace(go.Scatter(
+        x=[str(y) for y in tx_years], y=tx_cum_capacity,
+        mode="lines+markers", name="Cumulative Total Capacity",
+        line=dict(color="#37474f", width=3, dash="dot"), yaxis="y2",
+    ))
     fig_tx_cap.update_layout(
         title="Transmission Lines — Licensed Capacity by Year (B.S.)",
         xaxis_title="B.S. Year", yaxis_title="Capacity (MW)",
+        yaxis2=dict(title="Cumulative Total Capacity (MW)", overlaying="y", side="right",
+                     showgrid=False, range=[0, max(tx_cum_capacity) * 1.15 if tx_cum_capacity else 1]),
         height=480, legend=dict(orientation="h", y=-0.2),
     )
     add_watermark(fig_tx_cap)
@@ -2400,11 +2543,27 @@ def render_compare(loader, recs):
     for r in lines:
         if r["voltage_kv"]:
             by_volt[r["voltage_kv"]] += 1
-    fig_volt = go.Figure(go.Bar(
-        x=[f"{v:.0f} kV" for v in sorted(by_volt)], y=[by_volt[v] for v in sorted(by_volt)],
+        volt_keys = sorted(by_volt)
+    volt_vals = [by_volt[v] for v in volt_keys]
+    cum_volt_vals = _cumsum([float(c) for c in volt_vals])
+    fig_volt = go.Figure()
+    fig_volt.add_trace(go.Bar(
+        x=[f"{v:.0f} kV" for v in volt_keys], y=volt_vals,
         marker_color="#6a1b9a", width=0.45,
+        name="Projects",
     ))
-    fig_volt.update_layout(title="Transmission Lines by Voltage Class", height=480, bargap=0.45)
+    fig_volt.add_trace(go.Scatter(
+        x=[f"{v:.0f} kV" for v in volt_keys], y=cum_volt_vals, mode="lines+markers",
+        name="Cumulative Projects", yaxis="y2",
+        line=dict(color="#37474f", width=3, dash="dot"),
+        marker=dict(size=8),
+    ))
+    fig_volt.update_layout(
+        title="Transmission Lines by Voltage Class", height=480, bargap=0.45,
+        yaxis2=dict(title="Cumulative Projects", overlaying="y", side="right",
+                     showgrid=False, range=[0, max(cum_volt_vals) * 1.15 if cum_volt_vals else 1]),
+        legend=dict(orientation="h", y=-0.15),
+    )
     add_watermark(fig_volt)
 
     return dbc.Tabs(id="compare-subtabs", active_tab="plants", children=[
@@ -2434,10 +2593,22 @@ def render_table(recs, f_crs=None):
         else:
             row["lat_disp"] = row["lon_disp"] = None
         data.append(row)
-    label_map = {"lat_disp": f"Latitude ({ct.CRS_LABELS[f_crs]})",
-                 "lon_disp": f"Longitude ({ct.CRS_LABELS[f_crs]})"}
+    label_map = {
+        "project": "Project Name", "type": "Type", "status": "License Stage",
+        "capacity_mw": "Capacity (MW)", "voltage_kv": "Voltage (kV)",
+        "line_length_km": "Line Length (KM)", "district": "District",
+        "province": "Province", "promoter": "Promoter",
+        "lat_disp": f"Latitude ({ct.CRS_LABELS[f_crs]})",
+        "lon_disp": f"Longitude ({ct.CRS_LABELS[f_crs]})",
+        "loc_source": "Location Source",
+    }
+    col_widths = {
+        "project": "220px", "type": "110px", "status": "160px",
+        "capacity_mw": "100px", "voltage_kv": "90px", "line_length_km": "100px",
+        "district": "120px", "province": "100px", "promoter": "180px",
+        "lat_disp": "110px", "lon_disp": "110px", "loc_source": "130px",
+    }
 
-    # REQ 11: Page size dropdown at last position
     return html.Div([
         dash_table.DataTable(
             id="data-table",
@@ -2447,13 +2618,49 @@ def render_table(recs, f_crs=None):
             page_action="native",
             sort_action="native",
             filter_action="native",
-            style_table={"overflowX": "auto"},
-            style_cell={"fontFamily": "Helvetica", "fontSize": "13px", "padding": "6px"},
-            style_header={"fontWeight": "bold", "backgroundColor": "#f1f3f5"},
+            style_table={
+                "overflowX": "auto",
+                "border": "1px solid #dee2e6",
+                "borderRadius": "6px",
+            },
+            style_cell={
+                "fontFamily": "Helvetica, Arial, sans-serif",
+                "fontSize": "13px",
+                "padding": "8px 12px",
+                "textAlign": "left",
+                "whiteSpace": "nowrap",
+                "overflow": "hidden",
+                "textOverflow": "ellipsis",
+                "border": "1px solid #e9ecef",
+                "height": "36px",
+            },
+            style_header={
+                "fontWeight": "bold",
+                "backgroundColor": "#f8f9fa",
+                "color": "#495057",
+                "border": "1px solid #dee2e6",
+                "textAlign": "center",
+                "padding": "10px 12px",
+                "fontSize": "13px",
+                "whiteSpace": "normal",
+                "height": "auto",
+            },
+            style_data_conditional=[
+                {
+                    "if": {"row_index": "odd"},
+                    "backgroundColor": "#fafbfc",
+                },
+                {
+                    "if": {"state": "active"},
+                    "backgroundColor": "#e7f1ff",
+                    "border": "1px solid #b8daff",
+                },
+            ],
+            style_cell_conditional=[
+                {"if": {"column_id": c}, "minWidth": w, "width": w, "maxWidth": w}
+                for c, w in col_widths.items()
+            ],
         ),
-        # REQ 11: Page size selector at the bottom — table starts at 10 rows;
-        # the picker itself only offers 25/50/100/All (10 is the default,
-        # not a re-selectable option).
         html.Div([
             html.Label("Show entries:", className="me-2 fw-semibold small"),
             dcc.Dropdown(
