@@ -549,7 +549,7 @@ app.layout = dbc.Container(fluid=True, children=[
                          alt="Organisation logo", className="me-2 site-header-logo")
                 if ss.get_logo_path() else None,
                 html.Div([
-                    html.Div("Nepal Power Plant & Transmission Line License Status Dashboard",
+                    html.Div("Nepal Power Plant and Transmission Line License Status Dashboard",
                               className="site-header-title"),
                     html.Div("Source: www.doed.gov.np | Licensing pipeline overview",
                               className="site-header-subtitle"),
@@ -619,7 +619,7 @@ app.layout = dbc.Container(fluid=True, children=[
                 html.A("Nepal Electricity Authority (NEA)",
                        href="https://nea.org.np", target="_blank", className="d-block"),
                   html.A("Alternative Energy Promotion Center (AEPC)",
-                       href="https://aepc.org.np", target="_blank", className="d-block"),
+                       href="https://aepc.gov.np", target="_blank", className="d-block"),
             ]),
             dbc.Col(md=4, className="text-md-end", children=[
                 html.Div("👥 …visitors", id="visitor-counter", className="footer-visitor-counter"),
