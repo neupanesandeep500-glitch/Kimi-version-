@@ -1212,14 +1212,14 @@ def build_ticker_segments(loader, recs=None):
     largest_ids = {id(r) for r in largest_this_year}
     for r in largest_this_year:
         segs.append((f"🏆 Largest plant connected in {ty_}: {r['project'][:34]} — "
-                     f"{de.fmt_mw(r['capacity_mw'])} MW • {_admin_units_str(r)} • "
+                     f"{de.fmt_mw(r['capacity_mw'])} MW • {_admin_units_str(r, max_each=None)} • "
                      f"COD {de.bs_str(r['cod_bs'])}", "#7be3a2"))
 
     latest_candidates = sorted([r for r in cur_sel if _cod_key(r)], key=_cod_key, reverse=True)
     latest = [r for r in latest_candidates if id(r) not in largest_ids][:1]
     for r in latest:
         segs.append((f"🔌 Latest plant connected: {r['project'][:34]} — "
-                     f"{de.fmt_mw(r['capacity_mw'])} MW • {_admin_units_str(r)} • "
+                     f"{de.fmt_mw(r['capacity_mw'])} MW • {_admin_units_str(r, max_each=None)} • "
                      f"{textwrap.shorten(r['promoter'] or '—', 26)} • "
                      f"COD {de.bs_str(r['cod_bs'])}", "#c9b6ff"))
     return segs
@@ -1357,26 +1357,44 @@ _FLIP_PANEL_CHART_KWARGS = dict(plot_bgcolor="#ffffff", paper_bgcolor="#ffffff",
                                  transition=dict(duration=500, easing="cubic-in-out"))
 
 
-def render_category_card(label, stage_map, total_n, total_mw, bg_url, base_color, total_km=0.0,
-                          stage_order=None, is_transmission=False):
-    """Two-zone infographic card: a light rounded photo frame on top
-    (the category's admin-uploaded background image, or a plain
-    placeholder frame when none has been uploaded), and a solid-color
-    stat block underneath carrying the label + stage breakdown."""
-    stage_order = stage_order or STAGE_DISPLAY_ORDER
-
-    photo_inner_style = {"height": "100%", "borderRadius": "10px", "backgroundColor": "#e3e6ea"}
+def _photo_frame_with_label(label, bg_url, height=150):
+    """Photo frame (uploaded category image, or a plain placeholder
+    when none has been uploaded) with the Power/Stage/Province name
+    overlaid directly on top of the picture — bottom-left, on a dark
+    gradient scrim so it stays readable on any photo — instead of
+    being written on a separate line underneath the image."""
+    photo_inner_style = {"height": "100%", "borderRadius": "10px",
+                          "backgroundColor": "#e3e6ea", "position": "relative"}
     if bg_url:
         photo_inner_style.update({
             "backgroundImage": f'url("{bg_url}")',
             "backgroundSize": "cover", "backgroundPosition": "center",
             "transition": "background-image 0.6s ease-in-out",
         })
-    photo_frame = html.Div(
-        html.Div(style=photo_inner_style),
+    label_overlay = html.Div(label, style={
+        "position": "absolute", "left": 0, "right": 0, "bottom": 0,
+        "padding": "8px 12px 6px", "color": "#fff", "fontWeight": "700",
+        "fontSize": "18px", "textShadow": "0 1px 3px rgba(0,0,0,0.8)",
+        "background": "linear-gradient(to top, rgba(0,0,0,0.68), rgba(0,0,0,0))",
+        "borderRadius": "0 0 10px 10px",
+    })
+    return html.Div(
+        html.Div(label_overlay, style=photo_inner_style),
         style={"backgroundColor": "#e9ebee", "borderRadius": "14px 14px 0 0",
-               "padding": "10px", "height": "150px"},
+               "padding": "10px", "height": f"{height}px", "flex": "0 0 auto"},
     )
+
+
+def render_category_card(label, stage_map, total_n, total_mw, bg_url, base_color, total_km=0.0,
+                          stage_order=None, is_transmission=False):
+    """Two-zone infographic card: a light rounded photo frame on top
+    (the category's admin-uploaded background image, or a plain
+    placeholder frame when none has been uploaded) with the name
+    written inside the picture itself, and a solid-color stat block
+    underneath carrying the stage breakdown."""
+    stage_order = stage_order or STAGE_DISPLAY_ORDER
+
+    photo_frame = _photo_frame_with_label(label, bg_url)
 
     stage_rows = []
     for st in stage_order:
@@ -1401,19 +1419,23 @@ def render_category_card(label, stage_map, total_n, total_mw, bg_url, base_color
         totals_line = f"{total_n:,} Projects · {total_mw:,.1f} MW"
 
     stat_block = html.Div([
-        html.Div(label, className="fw-bold text-center", style={"fontSize": "20px", "color": "#fff"}),
-        html.Div(totals_line, className="small text-center mb-2",
+        html.Div(totals_line, className="small text-center mb-2 fw-semibold",
                   style={"color": "rgba(255,255,255,0.9)"}),
         html.Div(stage_rows or [html.Div("No records", className="small text-center",
                                           style={"color": "rgba(255,255,255,0.75)"})]),
     ], style={
         "backgroundColor": base_color, "borderRadius": "0 0 14px 14px",
-        "padding": "14px 16px", "flex": "1", "overflowY": "auto",
+        "padding": "14px 16px", "flex": "1 1 auto",
     })
 
+    # No fixed/limited height and no overflowY scroll here — the card
+    # grows to fit every stage row so the full summary is visible by
+    # default; minHeight only keeps it visually aligned with the chart
+    # beside it when there's little content.
     return dbc.Card([photo_frame, stat_block],
                      key=f"cat-{label}", className="mb-3 shadow-sm flip-card-animate",
-                     style={"height": "360px", "display": "flex", "flexDirection": "column"})
+                     style={"minHeight": "360px", "height": "auto",
+                            "display": "flex", "flexDirection": "column"})
 
 
 def compute_breakdown(recs, key_field):
@@ -1447,25 +1469,38 @@ def status_pie(recs, title):
 
 
 # ── OVERVIEW TAB ────────────────────────────────────────────────────────────
-def type_flip_chart_figure(t, stage_map, bg_url=None):
+def type_flip_chart_figure(t, stage_map, bg_url=None, y_max=None):
     """Chart figure for the type flip card — shows THIS type's own
     stage breakdown, so it flips in sync with the card instead of
     staying constant. bg_url is accepted for call-site compatibility
-    but not drawn here."""
-    stages_present = [s for s in STAGE_DISPLAY_ORDER if s in stage_map]
+    but not drawn here.
+
+    Stable-axis fix: every flip used to redraw with only the stages
+    that type actually has, and let Plotly auto-scale the y-axis to
+    that type's own max — so both the x categories and the y range
+    jumped on every tick, making the chart look like it was
+    re-plotting from scratch. Now the x-axis always carries the full
+    STAGE_DISPLAY_ORDER (0-value bars for stages this type has none
+    of) and the y-axis uses a fixed range shared across every type
+    (y_max, the largest single-stage value across ALL types) so only
+    the bar heights change between flips, not the axes themselves."""
     use_km = (t == "Transmission Line")
     idx = 2 if use_km else 1
     unit = "KM" if use_km else "MW"
-    colors = [get_status_colors().get(s, "#90a4ae") for s in stages_present]
+    colors = [get_status_colors().get(s, "#90a4ae") for s in STAGE_DISPLAY_ORDER]
+    yvals = [stage_map.get(s, [0, 0.0, 0.0])[idx] for s in STAGE_DISPLAY_ORDER]
 
     fig = go.Figure(go.Bar(
-        x=stages_present, y=[stage_map[s][idx] for s in stages_present],
+        x=STAGE_DISPLAY_ORDER, y=yvals,
         marker_color=colors,
-        text=[f"{stage_map[s][idx]:,.1f} {unit}" for s in stages_present], textposition="outside",
+        text=[f"{v:,.1f} {unit}" if v else "" for v in yvals], textposition="outside",
     ))
+    fixed_range = [0, y_max * 1.15] if y_max else None
     layout_kwargs = dict(
         title=f"{t} — {'Length (KM)' if use_km else 'Capacity (MW)'} by License Stage",
         height=360, yaxis_title=unit, margin=dict(l=10, r=10, t=40, b=10),
+        xaxis=dict(categoryorder="array", categoryarray=STAGE_DISPLAY_ORDER),
+        yaxis=dict(range=fixed_range, autorange=False if fixed_range else True),
         **_FLIP_PANEL_CHART_KWARGS,
     )
     fig.update_layout(**layout_kwargs)
@@ -1473,19 +1508,25 @@ def type_flip_chart_figure(t, stage_map, bg_url=None):
     return fig
 
 
-def province_flip_chart_figure(p, stage_map):
+def province_flip_chart_figure(p, stage_map, y_max=None):
     """Chart figure for the province flip card — shows THIS province's
-    own stage breakdown, flipping in sync with the card."""
-    stages_present = [s for s in STAGE_DISPLAY_ORDER if s in stage_map]
-    colors = [get_status_colors().get(s, "#90a4ae") for s in stages_present]
+    own stage breakdown, flipping in sync with the card. Same
+    stable-axis fix as type_flip_chart_figure: fixed x categories
+    (full STAGE_DISPLAY_ORDER) and a fixed y-axis range shared across
+    every province, so flipping only changes bar heights."""
+    colors = [get_status_colors().get(s, "#90a4ae") for s in STAGE_DISPLAY_ORDER]
+    yvals = [stage_map.get(s, [0, 0.0, 0.0])[1] for s in STAGE_DISPLAY_ORDER]
     fig = go.Figure(go.Bar(
-        x=stages_present, y=[stage_map[s][1] for s in stages_present],
+        x=STAGE_DISPLAY_ORDER, y=yvals,
         marker_color=colors,
-        text=[f"{stage_map[s][1]:,.1f} MW" for s in stages_present], textposition="outside",
+        text=[f"{v:,.1f} MW" if v else "" for v in yvals], textposition="outside",
     ))
+    fixed_range = [0, y_max * 1.15] if y_max else None
     fig.update_layout(
         title=f"{p} — Capacity (MW) by License Stage", height=360,
         yaxis_title="MW", margin=dict(l=10, r=10, t=40, b=10),
+        xaxis=dict(categoryorder="array", categoryarray=STAGE_DISPLAY_ORDER),
+        yaxis=dict(range=fixed_range, autorange=False if fixed_range else True),
         **_FLIP_PANEL_CHART_KWARGS,
     )
     add_watermark(fig)
@@ -1509,7 +1550,8 @@ def render_overview(loader, recs):
             id="type-flip-frame",
             style=flip_frame_style(),
             children=dbc.Row([
-                dbc.Col(html.Div(id="type-flip-card", children=card, style={"height": "360px"}), md=5),
+                dbc.Col(html.Div(id="type-flip-card", children=card,
+                                  style={"height": "auto", "minHeight": "360px"}), md=5),
                 dbc.Col(dcc.Graph(id="type-flip-chart", figure=fig_type, style={"height": "360px"}), md=7),
             ]),
         ),
@@ -1521,7 +1563,7 @@ def render_overview(loader, recs):
             style=flip_frame_style(),
             children=dbc.Row([
                 dbc.Col(html.Div(id="overview-province-flip-card", children=prov_card,
-                                  style={"height": "360px"}), md=5),
+                                  style={"height": "auto", "minHeight": "360px"}), md=5),
                 dbc.Col(dcc.Graph(id="overview-province-flip-chart", figure=fig_prov,
                                    style={"height": "360px"}), md=7),
             ]),
@@ -1551,11 +1593,16 @@ def _overview_province_flip_card_only(n):
         bg_url = ss.get_province_bg_url(p)
         color = get_province_colors().get(p, "#455a64")
 
+        # Fixed y-axis ceiling shared by every province's chart (the
+        # largest single-stage MW value seen anywhere) so the axis
+        # itself never moves when the card flips — only the bars do.
+        y_max = max((v[1] for stages in prov_stages.values() for v in stages.values()), default=0)
+
         card = render_category_card(
             p, prov_stages[p], prov_totals[p][0], prov_totals[p][1],
             bg_url, color, stage_order=STAGE_DISPLAY_ORDER
         )
-        fig = province_flip_chart_figure(p, prov_stages[p])
+        fig = province_flip_chart_figure(p, prov_stages[p], y_max=y_max)
         return card, bg_url, fig
     except Exception:
         tb = traceback.format_exc()
@@ -1603,7 +1650,11 @@ def _flip_card_only(n):
         card = render_category_card(t, stages[t], totals[t][0], totals[t][1],
                                      bg_url, get_type_colors().get(t, "#607d8b"),
                                      total_km=totals[t][2], stage_order=STAGE_DISPLAY_ORDER)
-        fig = type_flip_chart_figure(t, stages[t], bg_url)
+        # Fixed y-axis ceiling shared by every type's chart (Transmission
+        # Line is already excluded above, so this is MW throughout) so
+        # the axis itself never moves when the card flips.
+        y_max = max((v[1] for st in stages.values() for v in st.values()), default=0)
+        fig = type_flip_chart_figure(t, stages[t], bg_url, y_max=y_max)
         return card, bg_url, fig
     except Exception:
         tb = traceback.format_exc()
@@ -1635,12 +1686,7 @@ def render_single_stage_card(stage, sel_recs, bg_url, base_color, is_transmissio
     mw = sum(r["capacity_mw"] or 0 for r in sel_recs)
     km = sum(r["line_length_km"] or 0 for r in sel_recs) if is_transmission else 0.0
 
-    header_style = {
-        "borderRadius": "8px 8px 0 0", "padding": "14px 16px", "color": "#fff",
-        "position": "relative", "height": "180px", "display": "flex",
-        "flexDirection": "column", "justifyContent": "flex-end",
-        "backgroundColor": base_color,
-    }
+    photo_frame = _photo_frame_with_label(stage, bg_url)
 
     rows = []
     if is_transmission:
@@ -1657,10 +1703,11 @@ def render_single_stage_card(stage, sel_recs, bg_url, base_color, is_transmissio
         for key in sorted(volt_totals, key=lambda k: (k == "Unspecified kV", k)):
             n_, mw_, km_ = volt_totals[key]
             rows.append(html.Div([
-                html.Span(key, className="small"),
+                html.Span(key, className="small", style={"color": "rgba(255,255,255,0.85)"}),
                 html.Span(f"{n_:,} Projects · {km_:,.1f} KM · {mw_:,.1f} MW",
-                          className="small fw-semibold float-end"),
-            ], className="d-flex justify-content-between border-bottom py-1"))
+                          className="small fw-semibold float-end", style={"color": "#fff"}),
+            ], className="d-flex justify-content-between py-1",
+               style={"borderBottom": "1px solid rgba(255,255,255,0.25)"}))
     else:
         prov_totals = defaultdict(lambda: [0, 0.0])
         for r in sel_recs:
@@ -1672,11 +1719,12 @@ def render_single_stage_card(stage, sel_recs, bg_url, base_color, is_transmissio
                         [p for p in prov_totals if p not in PROVINCE_DISPLAY_ORDER]
         top_provs = [(p, prov_totals.get(p, [0, 0.0])) for p in ordered_provs]
         for p, v in top_provs:
-            color_cls = get_province_color_class(p)
             rows.append(html.Div([
-                html.Span(p, className=f"small {color_cls}"),
-                html.Span(f"{v[0]:,} Projects · {v[1]:,.1f} MW", className="small fw-semibold float-end"),
-            ], className="d-flex justify-content-between border-bottom py-1"))
+                html.Span(p, className="small", style={"color": "rgba(255,255,255,0.85)"}),
+                html.Span(f"{v[0]:,} Projects · {v[1]:,.1f} MW", className="small fw-semibold float-end",
+                          style={"color": "#fff"}),
+            ], className="d-flex justify-content-between py-1",
+               style={"borderBottom": "1px solid rgba(255,255,255,0.25)"}))
 
     # REQ 3: Consistent pattern
     if is_transmission:
@@ -1684,15 +1732,21 @@ def render_single_stage_card(stage, sel_recs, bg_url, base_color, is_transmissio
     else:
         totals_line = f"{n:,} Projects · {mw:,.1f} MW"
 
-    return dbc.Card([
-        html.Div([
-            html.Div(stage, className="fw-bold", style={"fontSize": "15px"}),
-            html.Div(totals_line, className="small", style={"opacity": 0.9}),
-        ], style=header_style),
-        dbc.CardBody(rows or [html.Div("No records for this stage yet", className="small text-muted")],
-                     style={"padding": "8px 16px", "overflowY": "auto"}),
-    ], key=f"stage-{stage}", className="mb-3 shadow-sm flip-card-animate",
-       style={"height": "360px", "display": "flex", "flexDirection": "column"})
+    stat_block = html.Div([
+        html.Div(totals_line, className="small text-center mb-2 fw-semibold", style={"color": "#fff"}),
+        html.Div(rows or [html.Div("No records for this stage yet", className="small text-center",
+                                    style={"color": "rgba(255,255,255,0.75)"})]),
+    ], style={
+        "backgroundColor": base_color, "borderRadius": "0 0 14px 14px",
+        "padding": "14px 16px", "flex": "1 1 auto",
+    })
+
+    # No fixed height / overflowY scroll on the body — the card grows to
+    # fit every row so the full stage summary shows by default.
+    return dbc.Card([photo_frame, stat_block],
+                     key=f"stage-{stage}", className="mb-3 shadow-sm flip-card-animate",
+                     style={"minHeight": "360px", "height": "auto",
+                            "display": "flex", "flexDirection": "column"})
 
 
 def stage_province_chart_figure(stage, sel_recs, is_transmission=False, bg_url=None):
@@ -1872,7 +1926,7 @@ def render_plants_tab(loader, recs):
             style=flip_frame_style(),
             children=dbc.Row([
                 dbc.Col(html.Div(id="plants-stage-flip-card", children=stage_card0,
-                                  style={"height": "360px"}), md=5),
+                                  style={"height": "auto", "minHeight": "360px"}), md=5),
                 dbc.Col(dcc.Graph(figure=fig_stage, style={"height": "360px"}), md=7),
             ]),
         ),
@@ -1911,7 +1965,7 @@ def render_plants_tab(loader, recs):
             style=flip_frame_style(),
             children=dbc.Row([
                 dbc.Col(html.Div(id="province-flip-card", children=prov_card,
-                                  style={"height": "360px"}), md=5),
+                                  style={"height": "auto", "minHeight": "360px"}), md=5),
                 dbc.Col(dcc.Graph(figure=fig_prov, style={"height": "360px"}), md=7),
             ]),
         ),
@@ -2042,7 +2096,7 @@ def render_transmission_tab(loader, recs):
             style=flip_frame_style(),
             children=dbc.Row([
                 dbc.Col(html.Div(id="tx-stage-flip-card", children=tx_card0,
-                                  style={"height": "360px"}), md=5),
+                                  style={"height": "auto", "minHeight": "360px"}), md=5),
                 dbc.Col(dcc.Graph(figure=fig_stage, style={"height": "360px"}), md=7),
             ]),
         ),
