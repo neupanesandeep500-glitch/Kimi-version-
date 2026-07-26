@@ -1408,7 +1408,7 @@ def _legend_below_xaxis():
     the legend always starts below the axis, however many entries it
     has. Pair this with a wide-enough bottom margin (see
     _BOTTOM_MARGIN_FOR_LEGEND) so Plotly actually reserves the room."""
-    return dict(orientation="h", yanchor="top", y=-0.32, xanchor="center", x=0.5)
+    return dict(orientation="h", yanchor="top", y=-0.32, xanchor="left", x=0.0)
 
 
 # Bottom margin (px) to reserve so a legend placed via
