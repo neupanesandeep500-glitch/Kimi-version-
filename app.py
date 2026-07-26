@@ -2994,8 +2994,119 @@ def reset_custom_style(n_clicks):
     return (
         "default", "group", "bar", "Arial", 16, 12, ["show"], ["animate"], ["show"], feedback
     )
+# ── PDF REPORT: PAGE-BUILDING HELPERS ───────────────────────────────────────
+def _pdf_new_page(figsize=(11.69, 8.27)):
+    fig = plt.figure(figsize=figsize)
+    ax = fig.add_subplot(111)
+    return fig, ax
 
 
+def _pdf_finish_page(pdf, fig, ax, fig_num, title):
+    ax.set_title(f"Figure {fig_num}: {title}", fontsize=13, fontweight="bold", pad=14)
+    add_watermark_matplotlib(fig)
+    fig.tight_layout()
+    pdf.savefig(fig)
+    plt.close(fig)
+
+
+def _pdf_bar_with_cumulative(pdf, fig_num, title, categories, values, colors,
+                              y_label, cum_label, value_fmt="{:,.1f}"):
+    """Bar chart + a secondary-axis cumulative line, mirroring the
+    Plotly bar+cumulative pattern used throughout the dashboard."""
+    if not categories:
+        return
+    fig, ax = _pdf_new_page()
+    bars = ax.bar(categories, values, color=colors)
+    ax.set_ylabel(y_label)
+    for b, v in zip(bars, values):
+        if v:
+            ax.text(b.get_x() + b.get_width() / 2, v, value_fmt.format(v),
+                    ha="center", va="bottom", fontsize=8)
+    cum = _cumsum(values)
+    ax2 = ax.twinx()
+    ax2.plot(categories, cum, color="#37474f", marker="o", linestyle="--",
+             linewidth=2, label=cum_label)
+    ax2.set_ylabel(cum_label)
+    plt.setp(ax.get_xticklabels(), rotation=25, ha="right")
+    h1, l1 = ax.get_legend_handles_labels()
+    h2, l2 = ax2.get_legend_handles_labels()
+    if h1 or h2:
+        ax.legend(h1 + h2, l1 + l2, loc="upper left", fontsize=8, framealpha=0.9)
+    _pdf_finish_page(pdf, fig, ax, fig_num, title)
+
+
+def _pdf_pie(pdf, fig_num, title, labels, values, colors):
+    if not values:
+        return
+    fig, ax = _pdf_new_page()
+    ax.pie(values, labels=labels, autopct="%1.0f%%", colors=colors)
+    _pdf_finish_page(pdf, fig, ax, fig_num, title)
+
+
+def _pdf_multi_line_with_cumulative(pdf, fig_num, title, x_labels, series, colors,
+                                     y_label, cum_values=None, cum_label=None):
+    """series: dict[name] -> list of y-values aligned with x_labels."""
+    if not x_labels:
+        return
+    fig, ax = _pdf_new_page()
+    for name, yvals in series.items():
+        ax.plot(x_labels, yvals, marker="o", label=name, color=colors.get(name, "#607d8b"))
+    ax.set_ylabel(y_label)
+    ax.set_xlabel("B.S. Year")
+    plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
+    if cum_values is not None:
+        ax2 = ax.twinx()
+        ax2.plot(x_labels, cum_values, color="#2e7d32", linestyle="--",
+                 linewidth=2.5, marker="o", label=cum_label)
+        ax2.set_ylabel(cum_label)
+    h1, l1 = ax.get_legend_handles_labels()
+    if h1:
+        ax.legend(h1, l1, loc="upper left", fontsize=7, framealpha=0.9, ncol=2)
+    _pdf_finish_page(pdf, fig, ax, fig_num, title)
+
+
+def _pdf_stacked_bar(pdf, fig_num, title, x_labels, series, colors, y_label):
+    if not x_labels:
+        return
+    fig, ax = _pdf_new_page()
+    bottom = [0.0] * len(x_labels)
+    for name, yvals in series.items():
+        ax.bar(x_labels, yvals, bottom=bottom, label=name, color=colors.get(name, "#607d8b"))
+        bottom = [b + v for b, v in zip(bottom, yvals)]
+    ax.set_ylabel(y_label)
+    ax.set_xlabel("B.S. Year")
+    plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
+    ax.legend(loc="upper left", fontsize=7, framealpha=0.9, ncol=2)
+    _pdf_finish_page(pdf, fig, ax, fig_num, title)
+
+
+def _pdf_cover_page(pdf, recs, source_label, filter_summary):
+    import datetime
+    fig = plt.figure(figsize=(11.69, 8.27))
+    fig.text(0.5, 0.72, "Nepal Power Plant & Transmission Line",
+             ha="center", fontsize=22, fontweight="bold")
+    fig.text(0.5, 0.66, "License Status Dashboard — Full Report", ha="center", fontsize=16)
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    fig.text(0.5, 0.58, f"Generated: {now}", ha="center", fontsize=11, color="#555")
+    fig.text(0.5, 0.53, f"Data source: {source_label}", ha="center", fontsize=11, color="#555")
+    fig.text(0.5, 0.46, f"Filters applied: {filter_summary}", ha="center", fontsize=10, color="#555")
+    plants = [r for r in recs if r["type"] != "Transmission Line" and r["status"] not in de.EXTRA_STATUS_ORDER]
+    tx = [r for r in recs if r["type"] == "Transmission Line" and r["status"] not in de.EXTRA_STATUS_ORDER]
+    op = [r for r in plants if r["status"] == "Operating"]
+    kpi_lines = [
+        f"Installed Capacity: {sum(r['capacity_mw'] or 0 for r in op):,.1f} MW ({len(op):,} Operating Plants)",
+        f"Active Power Plants: {len(plants):,} Projects ({sum(r['capacity_mw'] or 0 for r in plants):,.1f} MW total)",
+        f"Transmission Lines: {len(tx):,} Projects ({sum(r['line_length_km'] or 0 for r in tx):,.1f} KM)",
+        f"GoN Studied Projects: {sum(1 for r in recs if r['status'] == 'GoN Study Project'):,}",
+        f"License Cancelled: {sum(1 for r in recs if r['status'] == 'Cancelled'):,}",
+    ]
+    fig.text(0.5, 0.36, "\n".join(kpi_lines), ha="center", fontsize=11, linespacing=1.8)
+    fig.text(0.98, 0.02, "Er. Sandeep Neupane", fontsize=8, color="gray",
+              ha="right", va="bottom", alpha=0.5)
+    pdf.savefig(fig)
+    plt.close(fig)
+
+# ── PDF REPORT ─────────────────────────────────────────────────────────────
 # ── PDF REPORT ─────────────────────────────────────────────────────────────
 @app.callback(
     Output("download-pdf", "data"),
@@ -3005,16 +3116,17 @@ def reset_custom_style(n_clicks):
     State("f-search", "value"),
     State("f-date-from", "value"), State("f-date-to", "value"),
     State("f-cod-from", "value"), State("f-cod-to", "value"),
+    State("f-district", "value"), State("f-local", "value"),
     prevent_initial_call=True,
 )
 def download_pdf(n_clicks, f_type, f_status, f_province, f_capacity, f_tx_length, f_year, f_search,
-                  f_date_from, f_date_to, f_cod_from, f_cod_to):
+                  f_date_from, f_date_to, f_cod_from, f_cod_to, f_district, f_local):
     loader = STATE["loader"]
     if loader is None or not loader.records:
         return None
     recs = get_filtered_records(f_type, f_status, f_province, f_capacity, f_year, f_search,
-                                 f_date_from, f_date_to, f_cod_from, f_cod_to, f_tx_length)
-
+                                 f_date_from, f_date_to, f_cod_from, f_cod_to, f_tx_length,
+                                 f_district, f_local)
     if not recs:
         return None
 
@@ -3023,36 +3135,234 @@ def download_pdf(n_clicks, f_type, f_status, f_province, f_capacity, f_tx_length
     import matplotlib.pyplot as plt
     from matplotlib.backends.backend_pdf import PdfPages
 
-    path = os.path.join(tempfile.gettempdir(), "license_status_report.pdf")
-    with PdfPages(path) as pdf:
-        fig = plt.figure(figsize=(11.69, 8.27))
-        ax = fig.add_subplot(111)
-        by_type = defaultdict(float)
-        for r in recs:
-            by_type[r["type"]] += r["capacity_mw"] or 0
-        colors = [get_type_colors().get(t, "#607d8b") for t in by_type]
-        ax.barh(list(by_type.keys()), list(by_type.values()), color=colors)
-        ax.set_title("Nepal Power Plant & Transmission Line License Status — Capacity by Type",
-                      fontsize=13, fontweight="bold")
-        ax.set_xlabel("Capacity (MW)")
-        add_watermark_matplotlib(fig)
-        fig.tight_layout()
-        pdf.savefig(fig)
-        plt.close(fig)
+    active_recs = [r for r in recs if r["status"] not in de.EXTRA_STATUS_ORDER]
+    plant_recs = [r for r in active_recs if r["type"] != "Transmission Line"]
+    tx_recs = [r for r in active_recs if r["type"] == "Transmission Line"]
 
-        fig2 = plt.figure(figsize=(11.69, 8.27))
-        ax2 = fig2.add_subplot(111)
-        by_status = defaultdict(int)
+    filter_bits = []
+    if f_type: filter_bits.append(f"Type: {', '.join(f_type)}")
+    if f_status: filter_bits.append(f"Stage: {', '.join(f_status)}")
+    if f_province: filter_bits.append(f"Province: {', '.join(f_province)}")
+    if f_district: filter_bits.append(f"District: {', '.join(f_district)}")
+    if f_search: filter_bits.append(f'Search: "{f_search}"')
+    filter_summary = "; ".join(filter_bits) if filter_bits else "None (showing all records)"
+
+    path = os.path.join(tempfile.gettempdir(), "license_status_report.pdf")
+    fig_num = 0
+    with PdfPages(path) as pdf:
+        _pdf_cover_page(pdf, recs, STATE.get("source_label", "—"), filter_summary)
+
+        # ── Power Plants ─────────────────────────────────────────────
+        fig_num += 1
+        by_type = defaultdict(float)
+        for r in plant_recs:
+            by_type[r["type"]] += r["capacity_mw"] or 0
+        types_ = list(by_type.keys())
+        _pdf_bar_with_cumulative(
+            pdf, fig_num, "Power Plants — Capacity by Type",
+            types_, [by_type[t] for t in types_],
+            [get_type_colors().get(t, "#607d8b") for t in types_],
+            "Capacity (MW)", "Cumulative Capacity (MW)",
+        )
+
+        fig_num += 1
+        by_status_count = defaultdict(int)
         for r in recs:
-            by_status[r["status"]] += 1
-        colors2 = [get_status_colors().get(s, "#90a4ae") for s in by_status]
-        ax2.pie(list(by_status.values()), labels=list(by_status.keys()), autopct="%1.0f%%",
-                colors=colors2)
-        ax2.set_title("License Stage Breakdown", fontsize=13, fontweight="bold")
-        add_watermark_matplotlib(fig2)
-        fig2.tight_layout()
-        pdf.savefig(fig2)
-        plt.close(fig2)
+            by_status_count[r["status"]] += 1
+        _pdf_pie(pdf, fig_num, "License Stage Breakdown — All Records",
+                 list(by_status_count.keys()), list(by_status_count.values()),
+                 [get_status_colors().get(s, "#90a4ae") for s in by_status_count])
+
+        fig_num += 1
+        stage_totals_p, _ = compute_breakdown(plant_recs, "status")
+        stages_p = [s for s in STAGE_DISPLAY_ORDER if s in stage_totals_p]
+        _pdf_bar_with_cumulative(
+            pdf, fig_num, "Power Plants — Capacity (MW) by License Stage",
+            stages_p, [stage_totals_p[s][1] for s in stages_p],
+            [get_status_colors().get(s, "#90a4ae") for s in stages_p],
+            "Capacity (MW)", "Cumulative Capacity (MW)",
+        )
+
+        fig_num += 1
+        prov_totals_p, _ = compute_breakdown(plant_recs, "province")
+        provs_p = [p for p in PROVINCE_DISPLAY_ORDER if p in prov_totals_p] + \
+                  [p for p in prov_totals_p if p not in PROVINCE_DISPLAY_ORDER]
+        _pdf_bar_with_cumulative(
+            pdf, fig_num, "Power Plants — Capacity (MW) by Province",
+            provs_p, [prov_totals_p[p][1] for p in provs_p],
+            [get_province_colors().get(p, "#455a64") for p in provs_p],
+            "Capacity (MW)", "Cumulative Capacity (MW)",
+        )
+
+        # ── Transmission Lines ───────────────────────────────────────
+        fig_num += 1
+        tx_stage_km = defaultdict(float)
+        for r in tx_recs:
+            tx_stage_km[r["status"]] += r["line_length_km"] or 0
+        stages_tx = [s for s in STAGE_DISPLAY_ORDER if s in tx_stage_km]
+        _pdf_bar_with_cumulative(
+            pdf, fig_num, "Transmission Lines — Length (KM) by License Stage",
+            stages_tx, [tx_stage_km[s] for s in stages_tx],
+            [get_status_colors().get(s, "#90a4ae") for s in stages_tx],
+            "Length (KM)", "Cumulative Length (KM)",
+        )
+
+        fig_num += 1
+        by_volt = defaultdict(float)
+        for r in tx_recs:
+            if r["voltage_kv"]:
+                by_volt[r["voltage_kv"]] += r["line_length_km"] or 0
+        volts = sorted(by_volt)
+        _pdf_bar_with_cumulative(
+            pdf, fig_num, "Transmission Lines — Length (KM) by Voltage Class",
+            [f"{v:.0f} kV" for v in volts], [by_volt[v] for v in volts],
+            ["#6a1b9a"] * len(volts), "Length (KM)", "Cumulative Length (KM)",
+        )
+
+        # ── GoN Studied Projects ─────────────────────────────────────
+        gon_recs = [r for r in recs if r["status"] == "GoN Study Project"]
+        if gon_recs:
+            fig_num += 1
+            by_type_g, _ = compute_breakdown(gon_recs, "type")
+            types_g = [t for t in de.TYPE_ORDER if t in by_type_g] + \
+                      [t for t in by_type_g if t not in de.TYPE_ORDER]
+            _pdf_bar_with_cumulative(
+                pdf, fig_num, "GoN Studied Projects — Count by Project Type",
+                types_g, [by_type_g[t][0] for t in types_g],
+                [get_type_colors().get(t, "#607d8b") for t in types_g],
+                "Number of Projects", "Cumulative Projects", value_fmt="{:,.0f}",
+            )
+            fig_num += 1
+            by_prov_g, _ = compute_breakdown(gon_recs, "province")
+            provs_g = [p for p in PROVINCE_DISPLAY_ORDER if p in by_prov_g] + \
+                      [p for p in by_prov_g if p not in PROVINCE_DISPLAY_ORDER]
+            _pdf_bar_with_cumulative(
+                pdf, fig_num, "GoN Studied Projects — Count by Province",
+                provs_g, [by_prov_g[p][0] for p in provs_g],
+                [get_province_colors().get(p, "#455a64") for p in provs_g],
+                "Number of Projects", "Cumulative Projects", value_fmt="{:,.0f}",
+            )
+
+        # ── License Cancelled ────────────────────────────────────────
+        canc_recs = [r for r in recs if r["status"] == "Cancelled"]
+        if canc_recs:
+            fig_num += 1
+            by_type_c, _ = compute_breakdown(canc_recs, "type")
+            types_c = [t for t in de.TYPE_ORDER if t in by_type_c] + \
+                      [t for t in by_type_c if t not in de.TYPE_ORDER]
+            _pdf_bar_with_cumulative(
+                pdf, fig_num, "License Cancelled — Count by Project Type",
+                types_c, [by_type_c[t][0] for t in types_c],
+                [get_type_colors().get(t, "#607d8b") for t in types_c],
+                "Number of Projects", "Cumulative Projects", value_fmt="{:,.0f}",
+            )
+            fig_num += 1
+            by_prov_c, _ = compute_breakdown(canc_recs, "province")
+            provs_c = [p for p in PROVINCE_DISPLAY_ORDER if p in by_prov_c] + \
+                      [p for p in by_prov_c if p not in PROVINCE_DISPLAY_ORDER]
+            _pdf_bar_with_cumulative(
+                pdf, fig_num, "License Cancelled — Count by Province",
+                provs_c, [by_prov_c[p][0] for p in provs_c],
+                [get_province_colors().get(p, "#455a64") for p in provs_c],
+                "Number of Projects", "Cumulative Projects", value_fmt="{:,.0f}",
+            )
+
+        # ── Growth Trends ────────────────────────────────────────────
+        plant_series = loader.yearly_series(plant_recs, key_field="type")
+        plant_years = sorted(plant_series.keys())
+        if plant_years:
+            all_plant_types = sorted({k for y in plant_years for k in plant_series[y].keys()})
+            fig_num += 1
+            series_cap = {t: [plant_series[y].get(t, [0, 0])[1] for y in plant_years]
+                          for t in all_plant_types}
+            operating_plants = [r for r in plant_recs if r["status"] == "Operating"]
+            op_series = loader.yearly_series(operating_plants, key_field="status")
+            op_by_year = {y: op_series.get(y, {}).get("Operating", [0, 0.0])[1] for y in plant_years}
+            cum, cum_capacity = 0.0, []
+            for y in plant_years:
+                cum += op_by_year.get(y, 0.0)
+                cum_capacity.append(cum)
+            _pdf_multi_line_with_cumulative(
+                pdf, fig_num, "Power Plants — Licensed Capacity by Year (B.S.)",
+                [str(y) for y in plant_years], series_cap,
+                {t: get_type_colors().get(t, "#607d8b") for t in all_plant_types},
+                "Capacity Licensed This Year (MW)", cum_capacity,
+                "Cumulative Installed Capacity — Operating (MW)",
+            )
+            fig_num += 1
+            series_count = {t: [plant_series[y].get(t, [0, 0])[0] for y in plant_years]
+                            for t in all_plant_types}
+            _pdf_stacked_bar(
+                pdf, fig_num, "Power Plants — Project Count by Year",
+                [str(y) for y in plant_years], series_count,
+                {t: get_type_colors().get(t, "#607d8b") for t in all_plant_types},
+                "Number of Projects",
+            )
+
+        tx_series = loader.yearly_series(tx_recs, key_field="status")
+        tx_years = sorted(tx_series.keys())
+        if tx_years:
+            all_tx_statuses = sorted({k for y in tx_years for k in tx_series[y].keys()})
+            fig_num += 1
+            series_tx_cap = {s: [tx_series[y].get(s, [0, 0])[1] for y in tx_years]
+                             for s in all_tx_statuses}
+            tx_totals_by_year = [sum(tx_series[y].get(s, [0, 0.0])[1] for s in all_tx_statuses)
+                                for y in tx_years]
+            _pdf_multi_line_with_cumulative(
+                pdf, fig_num, "Transmission Lines — Licensed Capacity by Year (B.S.)",
+                [str(y) for y in tx_years], series_tx_cap,
+                {s: get_status_colors().get(s, "#90a4ae") for s in all_tx_statuses},
+                "Capacity (MW)", _cumsum(tx_totals_by_year), "Cumulative Total Capacity (MW)",
+            )
+            fig_num += 1
+            series_tx_count = {s: [tx_series[y].get(s, [0, 0])[0] for y in tx_years]
+                               for s in all_tx_statuses}
+            _pdf_stacked_bar(
+                pdf, fig_num, "Transmission Lines — Project Count by Year",
+                [str(y) for y in tx_years], series_tx_count,
+                {s: get_status_colors().get(s, "#90a4ae") for s in all_tx_statuses},
+                "Number of Projects",
+            )
+
+        # ── Comparative Charts ───────────────────────────────────────
+        fig_num += 1
+        by_status_mw = defaultdict(float)
+        for r in plant_recs:
+            by_status_mw[r["status"]] += r["capacity_mw"] or 0
+        stages_cmp = [s for s in STAGE_DISPLAY_ORDER if s in by_status_mw] + \
+                     [s for s in by_status_mw if s not in STAGE_DISPLAY_ORDER]
+        _pdf_bar_with_cumulative(
+            pdf, fig_num, "Comparative — Power Plants Capacity by License Stage",
+            stages_cmp, [by_status_mw[s] for s in stages_cmp],
+            [get_status_colors().get(s, "#90a4ae") for s in stages_cmp],
+            "Capacity (MW)", "Cumulative Capacity (MW)",
+        )
+
+        fig_num += 1
+        by_status_km_c = defaultdict(float)
+        for r in tx_recs:
+            by_status_km_c[r["status"]] += r["line_length_km"] or 0
+        stages_tx_cmp = [s for s in STAGE_DISPLAY_ORDER if s in by_status_km_c] + \
+                        [s for s in by_status_km_c if s not in STAGE_DISPLAY_ORDER]
+        _pdf_bar_with_cumulative(
+            pdf, fig_num, "Comparative — Transmission Lines Length by License Stage",
+            stages_tx_cmp, [by_status_km_c[s] for s in stages_tx_cmp],
+            [get_status_colors().get(s, "#90a4ae") for s in stages_tx_cmp],
+            "Length (KM)", "Cumulative Length (KM)",
+        )
+
+        fig_num += 1
+        by_volt_cmp = defaultdict(int)
+        for r in tx_recs:
+            if r["voltage_kv"]:
+                by_volt_cmp[r["voltage_kv"]] += 1
+        volts_cmp = sorted(by_volt_cmp)
+        _pdf_bar_with_cumulative(
+            pdf, fig_num, "Comparative — Transmission Lines by Voltage Class",
+            [f"{v:.0f} kV" for v in volts_cmp], [by_volt_cmp[v] for v in volts_cmp],
+            ["#6a1b9a"] * len(volts_cmp), "Number of Projects", "Cumulative Projects",
+            value_fmt="{:,.0f}",
+        )
 
     return dcc.send_file(path)
 
