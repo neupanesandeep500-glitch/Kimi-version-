@@ -2196,19 +2196,19 @@ def render_transmission_tab(loader, recs):
     stage_rows = []
     for st in stages_present:
         color_cls = get_status_color_class(st)
-      2199:        stage_rows.append(html.Div([
-2200:            html.Span(st, className=f"fw-semibold {color_cls}"),
-2201:            html.Span(f"{stage_totals[st][0]:,} Projects", className="text-muted",
-2202:                      style={"textAlign": "center"}),
-2203:            html.Span(f"{stage_totals[st][1]:,.0f} KM", className="text-muted",
-2204:                      style={"textAlign": "center"}),
-2205:            html.Span(f"{stage_totals[st][2]:,.1f} MW", className="fw-semibold",
-2206:                      style={"textAlign": "right"}),
-2207:        ], className="border-bottom py-2", style={
-2208:            "display": "grid",
-2209:            "gridTemplateColumns": "2fr 1fr 1fr 1fr",
-2210:            "alignItems": "center",
-2211:        }))
+      stage_rows.append(html.Div([
+            html.Span(st, className=f"fw-semibold {color_cls}"),
+            html.Span(f"{stage_totals[st][0]:,} Projects", className="text-muted",
+                      style={"textAlign": "center"}),
+            html.Span(f"{stage_totals[st][1]:,.0f} KM", className="text-muted",
+                      style={"textAlign": "center"}),
+            html.Span(f"{stage_totals[st][2]:,.1f} MW", className="fw-semibold",
+                      style={"textAlign": "right"}),
+        ], className="border-bottom py-2", style={
+            "display": "grid",
+            "gridTemplateColumns": "2fr 1fr 1fr 1fr",
+            "alignItems": "center",
+        }))
 
     colors = [get_status_colors().get(s, "#90a4ae") for s in stages_present]
     km_values = [stage_totals[s][1] for s in stages_present]
