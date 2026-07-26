@@ -48,6 +48,13 @@ import coordinate_transform as ct
 import gis_leaflet_map
 from admin import admin_bp
 
+import matplotlib
+matplotlib.use("Agg")  # headless backend — must be set before pyplot is imported anywhere
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_pdf import PdfPages
+
+# ── GLOBAL CHART STYLE STATE (for Custom Tab) ───────────────────────────────
+
 # ── GLOBAL CHART STYLE STATE (for Custom Tab) ───────────────────────────────
 CHART_STYLE_STATE = {
     "bar_mode": "group",        # group, stack, relative
@@ -3107,7 +3114,6 @@ def _pdf_cover_page(pdf, recs, source_label, filter_summary):
     plt.close(fig)
 
 # ── PDF REPORT ─────────────────────────────────────────────────────────────
-# ── PDF REPORT ─────────────────────────────────────────────────────────────
 @app.callback(
     Output("download-pdf", "data"),
     Input("btn-pdf", "n_clicks"),
@@ -3129,12 +3135,6 @@ def download_pdf(n_clicks, f_type, f_status, f_province, f_capacity, f_tx_length
                                  f_district, f_local)
     if not recs:
         return None
-
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    from matplotlib.backends.backend_pdf import PdfPages
-
     active_recs = [r for r in recs if r["status"] not in de.EXTRA_STATUS_ORDER]
     plant_recs = [r for r in active_recs if r["type"] != "Transmission Line"]
     tx_recs = [r for r in active_recs if r["type"] == "Transmission Line"]
