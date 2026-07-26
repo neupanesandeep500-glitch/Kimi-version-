@@ -58,7 +58,29 @@ CHART_STYLE_STATE = {
     "title_size": 16,
     "label_size": 12,
     "animation": True,
+    "secondary_axis": True,     # show the cumulative line on a secondary y-axis
 }
+
+
+def _secondary_axis_enabled():
+    """Whether charts should draw their cumulative-total line on a
+    secondary y-axis, per the Custom tab's toggle."""
+    return CHART_STYLE_STATE.get("secondary_axis", True)
+
+
+def _apply_secondary_axis_setting(fig):
+    """Call on every figure that has a cumulative line on a secondary
+    y-axis, right before returning it. When the Custom tab's "Show
+    Secondary (Cumulative) Axis" switch is off, this drops the
+    trace(s) plotted on yaxis2 and clears the yaxis2 layout config, so
+    the cumulative line and its right-hand axis disappear together
+    instead of leaving an axis with nothing plotted on it. When the
+    switch is on (the default), this is a no-op."""
+    if _secondary_axis_enabled():
+        return fig
+    fig.data = [tr for tr in fig.data if getattr(tr, "yaxis", None) != "y2"]
+    fig.update_layout(yaxis2=None)
+    return fig
 
 # ── COLOR SCHEMES ───────────────────────────────────────────────────────────
 COLOR_SCHEMES = {
@@ -507,7 +529,6 @@ TAB_DEFAULT_FILTER_GROUP = {
     "overview": "grp-project", "plants": "grp-project", "transmission": "grp-location",
     "gon_study": "grp-project", "cancelled": "grp-project", "growth": "grp-dates",
     "gis": "grp-location", "compare": "grp-project", "table": "grp-search",
-    "custom": "grp-project",
 }
 
 
@@ -517,7 +538,13 @@ TAB_DEFAULT_FILTER_GROUP = {
     Input("main-tabs", "active_tab"),
 )
 def toggle_filter_sidebar(tab):
-    if tab == "overview":
+    # The Filter tree only makes sense on tabs that actually read the
+    # filters (province/district/date/search etc.) to narrow the data
+    # shown. Overview never reads them, and neither does Custom Style
+    # (it only changes chart appearance settings) — so both go full
+    # width with the filter sidebar hidden instead of showing a filter
+    # panel that has no effect on what's on screen.
+    if tab in ("overview", "custom"):
         return {"display": "none"}, 12
     return {"display": "block"}, 9
 
@@ -1363,8 +1390,33 @@ def flip_heading_style(bg_url=None):
 
 # Solid panel look for charts/cards — no background photo is drawn behind
 # them anymore (REQ: image restricted to the flip card's own photo zone).
-_FLIP_PANEL_CHART_KWARGS = dict(plot_bgcolor="#ffffff", paper_bgcolor="#ffffff",
-                                 transition=dict(duration=500, easing="cubic-in-out"))
+# NOTE: no `transition` here on purpose. Plotly's built-in transition
+# animates the axis range itself whenever it changes between flips, which
+# is what made the chart look like it was "wobbling"/rescaling every few
+# seconds. The chart should just swap to its new values cleanly, the same
+# way a table's cells update — the gentle/smooth part comes from the
+# card's own CSS crossfade (see _photo_frame_with_label), not from
+# animating the plot itself.
+def _legend_below_xaxis():
+    """Shared horizontal-legend position for every chart in the app.
+
+    Plotly's default (or a small y like -0.15/-0.18/-0.2) anchors the
+    legend by its own center, so as the legend box grows (long trace
+    names, secondary-axis entries) it creeps upward and sits on top of
+    the x-axis tick labels / axis title instead of below them. Anchoring
+    the TOP of the legend box at a fixed, more negative y instead means
+    the legend always starts below the axis, however many entries it
+    has. Pair this with a wide-enough bottom margin (see
+    _BOTTOM_MARGIN_FOR_LEGEND) so Plotly actually reserves the room."""
+    return dict(orientation="h", yanchor="top", y=-0.32, xanchor="center", x=0.5)
+
+
+# Bottom margin (px) to reserve so a legend placed via
+# _legend_below_xaxis() has room to sit under the x-axis without being
+# clipped or overlapping the axis title/tick labels.
+_BOTTOM_MARGIN_FOR_LEGEND = 100
+
+_FLIP_PANEL_CHART_KWARGS = dict(plot_bgcolor="#ffffff", paper_bgcolor="#ffffff")
 
 
 def _photo_frame_with_label(label, bg_url, height=150):
@@ -1479,7 +1531,7 @@ def status_pie(recs, title):
 
 
 # ── OVERVIEW TAB ────────────────────────────────────────────────────────────
-def type_flip_chart_figure(t, stage_map, bg_url=None):
+def type_flip_chart_figure(t, stage_map, bg_url=None, y_max=None, cum_max=None):
     """Chart figure for the type flip card — shows THIS type's own
     stage breakdown, so it flips in sync with the card instead of
     staying constant. bg_url is accepted for call-site compatibility
@@ -1490,11 +1542,12 @@ def type_flip_chart_figure(t, stage_map, bg_url=None):
     around (bars appearing/disappearing/reordering) on every tick.
     The x-axis now always carries the full STAGE_DISPLAY_ORDER
     (0-value bars for stages this type has none of), so that part
-    stays fixed across flips. The y-axis, however, is scaled to
-    THIS type's own data (not a value shared across every type) —
-    each type gets headroom sized to its own max, so a small type
-    like Solar isn't flattened by Hydro's much larger scale.
-    Includes cumulative line on secondary axis."""
+    stays fixed across flips.
+
+    y_max/cum_max: optional override to force a specific axis range;
+    when not supplied (the default), the axis is sized to THIS type's
+    own data, so a small type isn't flattened by a much larger type's
+    scale. Includes cumulative line on secondary axis."""
     use_km = (t == "Transmission Line")
     idx = 2 if use_km else 1
     unit = "KM" if use_km else "MW"
@@ -1515,29 +1568,32 @@ def type_flip_chart_figure(t, stage_map, bg_url=None):
         line=dict(color="#37474f", width=3, dash="dot"),
         marker=dict(size=7),
     ))
-    own_max = max(yvals, default=0) or 1
-    cum_max = max(cum_vals, default=0) or 1
+    axis_max = y_max if y_max else (max(yvals, default=0) or 1)
+    axis_cum_max = cum_max if cum_max else (max(cum_vals, default=0) or 1)
     layout_kwargs = dict(
         title=f"{t} — {'Length (KM)' if use_km else 'Capacity (MW)'} by License Stage",
         height=360, yaxis_title=unit,
         yaxis2=dict(title=f"Cumulative {unit}", overlaying="y", side="right",
-                     showgrid=False, range=[0, cum_max * 1.15]),
-        margin=dict(l=10, r=10, t=40, b=10),
+                     showgrid=False, range=[0, axis_cum_max * 1.15]),
+        margin=dict(l=10, r=10, t=40, b=_BOTTOM_MARGIN_FOR_LEGEND),
         xaxis=dict(categoryorder="array", categoryarray=STAGE_DISPLAY_ORDER),
-        yaxis=dict(range=[0, own_max * 1.15], autorange=False),
-        legend=dict(orientation="h", y=-0.18),
+        yaxis=dict(range=[0, axis_max * 1.15], autorange=False),
+        legend=_legend_below_xaxis(),
         **_FLIP_PANEL_CHART_KWARGS,
     )
     fig.update_layout(**layout_kwargs)
+    fig = _apply_secondary_axis_setting(fig)
     add_watermark(fig)
     return fig
 
-def province_flip_chart_figure(p, stage_map):
+def province_flip_chart_figure(p, stage_map, y_max=None):
     """Chart figure for the province flip card — shows THIS province's
     own stage breakdown, flipping in sync with the card. Same fixed
-    x-categories as type_flip_chart_figure, but the y-axis is scaled
-    to THIS province's own data rather than a value shared across
-    every province."""
+    x-categories as type_flip_chart_figure.
+
+    y_max: optional override to force a specific axis range; when not
+    supplied (the default), the axis is sized to THIS province's own
+    data."""
     colors = [get_status_colors().get(s, "#90a4ae") for s in STAGE_DISPLAY_ORDER]
     yvals = [stage_map.get(s, [0, 0.0, 0.0])[1] for s in STAGE_DISPLAY_ORDER]
     fig = go.Figure(go.Bar(
@@ -1545,12 +1601,12 @@ def province_flip_chart_figure(p, stage_map):
         marker_color=colors,
         text=[f"{v:,.1f} MW" if v else "" for v in yvals], textposition="outside",
     ))
-    own_max = max(yvals, default=0) or 1
+    axis_max = y_max if y_max else (max(yvals, default=0) or 1)
     fig.update_layout(
         title=f"{p} — Capacity (MW) by License Stage", height=360,
         yaxis_title="MW", margin=dict(l=10, r=10, t=40, b=10),
         xaxis=dict(categoryorder="array", categoryarray=STAGE_DISPLAY_ORDER),
-        yaxis=dict(range=[0, own_max * 1.15], autorange=False),
+        yaxis=dict(range=[0, axis_max * 1.15], autorange=False),
         **_FLIP_PANEL_CHART_KWARGS,
     )
     add_watermark(fig)
@@ -1622,6 +1678,11 @@ def _overview_province_flip_card_only(n):
             p, prov_stages[p], prov_totals[p][0], prov_totals[p][1],
             bg_url, color, stage_order=STAGE_DISPLAY_ORDER
         )
+        # Axis is scaled to THIS province's own data (not a shared max
+        # across every province) so each province's bars use its own
+        # headroom. No animation is used, so this no longer causes any
+        # rescale-wobble — the chart just renders each province's own
+        # scale directly.
         fig = province_flip_chart_figure(p, prov_stages[p])
         return card, bg_url, fig
     except Exception:
@@ -1670,6 +1731,10 @@ def _flip_card_only(n):
         card = render_category_card(t, stages[t], totals[t][0], totals[t][1],
                                      bg_url, get_type_colors().get(t, "#607d8b"),
                                      total_km=totals[t][2], stage_order=STAGE_DISPLAY_ORDER)
+        # Axis is scaled to THIS type's own data (not a shared max across
+        # every type) so a small type like Solar isn't flattened by
+        # Hydro's much larger scale. No animation is used, so this no
+        # longer causes any rescale-wobble between flips.
         fig = type_flip_chart_figure(t, stages[t], bg_url)
         return card, bg_url, fig
     except Exception:
@@ -1801,11 +1866,12 @@ def stage_province_chart_figure(stage, sel_recs, is_transmission=False, bg_url=N
         height=360, yaxis_title=unit,
         yaxis2=dict(title=f"Cumulative {unit}", overlaying="y", side="right",
                      showgrid=False, range=[0, max(cum_vals, default=0) * 1.15 if cum_vals else 1]),
-        margin=dict(l=10, r=10, t=40, b=10),
-        legend=dict(orientation="h", y=-0.18),
+        margin=dict(l=10, r=10, t=40, b=_BOTTOM_MARGIN_FOR_LEGEND),
+        legend=_legend_below_xaxis(),
         **_FLIP_PANEL_CHART_KWARGS,
     )
     fig.update_layout(**layout_kwargs)
+    fig = _apply_secondary_axis_setting(fig)
     add_watermark(fig)
     return fig
 
@@ -1954,9 +2020,10 @@ def render_plants_tab(loader, recs):
         height=420, yaxis_title="Capacity (MW)",
         yaxis2=dict(title="Cumulative Capacity (MW)", overlaying="y", side="right",
                      showgrid=False, range=[0, max(cum_mw) * 1.15 if cum_mw else 1]),
-        margin=dict(l=10, r=10, t=40, b=10),
-        legend=dict(orientation="h", y=-0.15),
+        margin=dict(l=10, r=10, t=40, b=_BOTTOM_MARGIN_FOR_LEGEND),
+        legend=_legend_below_xaxis(),
     )
+    fig_stage = _apply_secondary_axis_setting(fig_stage)
     add_watermark(fig_stage)
 
     # Stage flip card (animated card only) + static full stage-breakdown
@@ -2008,9 +2075,10 @@ def render_plants_tab(loader, recs):
         yaxis_title="Capacity (MW)",
         yaxis2=dict(title="Cumulative Capacity (MW)", overlaying="y", side="right",
                      showgrid=False, range=[0, max(prov_cum_mw) * 1.15 if prov_cum_mw else 1]),
-        margin=dict(l=10, r=10, t=40, b=10),
-        legend=dict(orientation="h", y=-0.15),
+        margin=dict(l=10, r=10, t=40, b=_BOTTOM_MARGIN_FOR_LEGEND),
+        legend=_legend_below_xaxis(),
     )
+    fig_prov = _apply_secondary_axis_setting(fig_prov)
     add_watermark(fig_prov)
 
     # Province flip card (animated card only) — the chart alongside it is
@@ -2156,9 +2224,10 @@ def render_transmission_tab(loader, recs):
         height=420, yaxis_title="Length (KM)",
         yaxis2=dict(title="Cumulative Length (KM)", overlaying="y", side="right",
                      showgrid=False, range=[0, max(cum_km) * 1.15 if cum_km else 1]),
-        margin=dict(l=10, r=10, t=40, b=10),
-        legend=dict(orientation="h", y=-0.15),
+        margin=dict(l=10, r=10, t=40, b=_BOTTOM_MARGIN_FOR_LEGEND),
+        legend=_legend_below_xaxis(),
     )
+    fig_stage = _apply_secondary_axis_setting(fig_stage)
     add_watermark(fig_stage)
 
     # REQ 9: No flipping when filter is applied in Transmission tab
@@ -2222,9 +2291,10 @@ def render_transmission_tab(loader, recs):
         yaxis_title="Length (KM)",
         yaxis2=dict(title="Cumulative Length (KM)", overlaying="y", side="right",
                      showgrid=False, range=[0, max(volt_cum_km) * 1.15 if volt_cum_km else 1]),
-        margin=dict(l=10, r=10, t=40, b=10),
-        legend=dict(orientation="h", y=-0.15),
+        margin=dict(l=10, r=10, t=40, b=_BOTTOM_MARGIN_FOR_LEGEND),
+        legend=_legend_below_xaxis(),
     )
+    fig_volt = _apply_secondary_axis_setting(fig_volt)
     add_watermark(fig_volt)
 
     volt_section = dbc.Row([
@@ -2286,9 +2356,10 @@ def render_side_category_tab(loader, recs, status_value, page_title):
         yaxis_title="Number of projects",
         yaxis2=dict(title="Cumulative Projects", overlaying="y", side="right",
                      showgrid=False, range=[0, max(cum_type_counts) * 1.15 if cum_type_counts else 1]),
-        margin=dict(l=10, r=10, t=40, b=10),
-        legend=dict(orientation="h", y=-0.15),
+        margin=dict(l=10, r=10, t=40, b=_BOTTOM_MARGIN_FOR_LEGEND),
+        legend=_legend_below_xaxis(),
     )
+    fig_type = _apply_secondary_axis_setting(fig_type)
     add_watermark(fig_type)
 
     by_prov, _ = compute_breakdown(side_recs, "province")
@@ -2313,9 +2384,10 @@ def render_side_category_tab(loader, recs, status_value, page_title):
         yaxis_title="Number of projects",
         yaxis2=dict(title="Cumulative Projects", overlaying="y", side="right",
                      showgrid=False, range=[0, max(cum_prov_counts) * 1.15 if cum_prov_counts else 1]),
-        margin=dict(l=10, r=10, t=40, b=10),
-        legend=dict(orientation="h", y=-0.15),
+        margin=dict(l=10, r=10, t=40, b=_BOTTOM_MARGIN_FOR_LEGEND),
+        legend=_legend_below_xaxis(),
     )
+    fig_prov = _apply_secondary_axis_setting(fig_prov)
     add_watermark(fig_prov)
 
     return html.Div([
@@ -2368,8 +2440,10 @@ def render_growth(loader, recs):
         xaxis_title="B.S. Year", yaxis_title="Capacity Licensed This Year (MW)",
         yaxis2=dict(title="Cumulative Installed Capacity — Operating (MW)",
                      overlaying="y", side="right", showgrid=False),
-        height=480, legend=dict(orientation="h", y=-0.2),
+        height=480, legend=_legend_below_xaxis(),
+        margin=dict(b=_BOTTOM_MARGIN_FOR_LEGEND),
     )
+    fig_plant_cap = _apply_secondary_axis_setting(fig_plant_cap)
     add_watermark(fig_plant_cap)
 
     fig_plant_count = go.Figure()
@@ -2412,8 +2486,10 @@ def render_growth(loader, recs):
         xaxis_title="B.S. Year", yaxis_title="Capacity (MW)",
         yaxis2=dict(title="Cumulative Total Capacity (MW)", overlaying="y", side="right",
                      showgrid=False, range=[0, max(tx_cum_capacity) * 1.15 if tx_cum_capacity else 1]),
-        height=480, legend=dict(orientation="h", y=-0.2),
+        height=480, legend=_legend_below_xaxis(),
+        margin=dict(b=_BOTTOM_MARGIN_FOR_LEGEND),
     )
+    fig_tx_cap = _apply_secondary_axis_setting(fig_tx_cap)
     add_watermark(fig_tx_cap)
 
     fig_tx_count = go.Figure()
@@ -2512,8 +2588,10 @@ def render_compare(loader, recs):
         height=560, bargap=0.45, yaxis_title="MW",
         yaxis2=dict(title="Cumulative Capacity (MW)", overlaying="y", side="right",
                      showgrid=False, range=[0, max(cum_mw) * 1.1 if cum_mw else 1]),
-        legend=dict(orientation="h", y=-0.18),
+        legend=_legend_below_xaxis(),
+        margin=dict(b=_BOTTOM_MARGIN_FOR_LEGEND),
     )
+    fig_plants = _apply_secondary_axis_setting(fig_plants)
     add_watermark(fig_plants)
 
     by_status_km = defaultdict(float)
@@ -2535,8 +2613,10 @@ def render_compare(loader, recs):
         height=560, bargap=0.45, yaxis_title="KM",
         yaxis2=dict(title="Cumulative Length (KM)", overlaying="y", side="right",
                      showgrid=False, range=[0, max(cum_km) * 1.1 if cum_km else 1]),
-        legend=dict(orientation="h", y=-0.18),
+        legend=_legend_below_xaxis(),
+        margin=dict(b=_BOTTOM_MARGIN_FOR_LEGEND),
     )
+    fig_lines = _apply_secondary_axis_setting(fig_lines)
     add_watermark(fig_lines)
 
     by_volt = defaultdict(int)
@@ -2562,8 +2642,10 @@ def render_compare(loader, recs):
         title="Transmission Lines by Voltage Class", height=480, bargap=0.45,
         yaxis2=dict(title="Cumulative Projects", overlaying="y", side="right",
                      showgrid=False, range=[0, max(cum_volt_vals) * 1.15 if cum_volt_vals else 1]),
-        legend=dict(orientation="h", y=-0.15),
+        legend=_legend_below_xaxis(),
+        margin=dict(b=_BOTTOM_MARGIN_FOR_LEGEND),
     )
+    fig_volt = _apply_secondary_axis_setting(fig_volt)
     add_watermark(fig_volt)
 
     return dbc.Tabs(id="compare-subtabs", active_tab="plants", children=[
@@ -2798,6 +2880,20 @@ def render_custom_tab():
                             className="mb-3",
                         ),
 
+                        dbc.Checklist(
+                            id="custom-secondary-axis",
+                            options=[{"label": " Show Secondary (Cumulative) Axis", "value": "show"}],
+                            value=["show"] if CHART_STYLE_STATE["secondary_axis"] else [],
+                            switch=True,
+                            className="mb-3",
+                        ),
+                        html.Div(
+                            "Turns the cumulative-total line and its right-hand axis "
+                            "on or off across every chart in the app.",
+                            className="text-muted small mb-3",
+                            style={"marginTop": "-8px"},
+                        ),
+
                         html.Hr(),
                         html.Div([
                             html.Strong("Current Settings Preview:"),
@@ -2829,10 +2925,11 @@ def render_custom_tab():
     State("custom-label-size", "value"),
     State("custom-show-grid", "value"),
     State("custom-animation", "value"),
+    State("custom-secondary-axis", "value"),
     prevent_initial_call=True,
 )
 def apply_custom_style(n_clicks, color_scheme, bar_mode, chart_type, font_family,
-                        title_size, label_size, show_grid, animation):
+                        title_size, label_size, show_grid, animation, secondary_axis):
     if not n_clicks:
         return dash.no_update, dash.no_update
 
@@ -2845,6 +2942,7 @@ def apply_custom_style(n_clicks, color_scheme, bar_mode, chart_type, font_family
         "label_size": label_size or 12,
         "show_grid": bool(show_grid),
         "animation": bool(animation),
+        "secondary_axis": bool(secondary_axis),
     }
     global CHART_STYLE_STATE
     CHART_STYLE_STATE.update(new_style)
@@ -2863,13 +2961,14 @@ def apply_custom_style(n_clicks, color_scheme, bar_mode, chart_type, font_family
     Output("custom-label-size", "value"),
     Output("custom-show-grid", "value"),
     Output("custom-animation", "value"),
+    Output("custom-secondary-axis", "value"),
     Output("custom-style-feedback", "children", allow_duplicate=True),
     Input("btn-reset-style", "n_clicks"),
     prevent_initial_call=True,
 )
 def reset_custom_style(n_clicks):
     if not n_clicks:
-        return [dash.no_update] * 9
+        return [dash.no_update] * 10
 
     global CHART_STYLE_STATE
     CHART_STYLE_STATE = {
@@ -2881,11 +2980,12 @@ def reset_custom_style(n_clicks):
         "title_size": 16,
         "label_size": 12,
         "animation": True,
+        "secondary_axis": True,
     }
 
     feedback = dbc.Alert("✅ Style settings reset to default!", color="info", dismissable=True)
     return (
-        "default", "group", "bar", "Arial", 16, 12, ["show"], ["animate"], feedback
+        "default", "group", "bar", "Arial", 16, 12, ["show"], ["animate"], ["show"], feedback
     )
 
 
