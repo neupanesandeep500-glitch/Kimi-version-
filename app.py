@@ -2196,7 +2196,10 @@ def render_transmission_tab(loader, recs):
     stage_rows = []
     for st in stages_present:
         color_cls = get_status_color_class(st)
-      stage_rows.append(html.Div([
+     stage_rows = []
+    for st in stages_present:
+        color_cls = get_status_color_class(st)
+        stage_rows.append(html.Div([
             html.Span(st, className=f"fw-semibold {color_cls}"),
             html.Span(f"{stage_totals[st][0]:,} Projects", className="text-muted",
                       style={"textAlign": "center"}),
