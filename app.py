@@ -2031,7 +2031,7 @@ def render_plants_tab(loader, recs):
     # it's the same stable fig_stage comparison used below.
     stage_card0, stage_bg0 = _stage_flip_card_only(0, plant_recs)
     stage_flip_row = html.Div([
-        html.Div(html.H5("⚡ License Stage (Animated)", className="m-0"),
+        html.Div(html.H5("⚡ License Stage ", className="m-0"),
                  id="plants-stage-flip-heading", style=flip_heading_style(stage_bg0)),
         html.Div(
             id="plants-stage-flip-frame",
@@ -2087,7 +2087,7 @@ def render_plants_tab(loader, recs):
 
     # REQ 8: Animated province slide section — background photo on heading only
     province_slide_section = html.Div([
-        html.Div(html.H5("🗺️ Province Overview (Animated)", className="m-0"),
+        html.Div(html.H5("🗺️ Province Overview ", className="m-0"),
                  id="province-flip-heading", style=flip_heading_style(prov_bg_url)),
         html.Div(
             id="province-flip-frame",
@@ -2235,7 +2235,7 @@ def render_transmission_tab(loader, recs):
     # The flip callback still works but user can also see static view
     tx_card0, tx_bg0 = _stage_flip_card_only(0, tx_recs, is_transmission=True)
     stage_flip_row = html.Div([
-        html.Div(html.H5("🔌 License Stage (Animated)", className="m-0"),
+        html.Div(html.H5("🔌 License Stage ", className="m-0"),
                  id="tx-stage-flip-heading", style=flip_heading_style(tx_bg0)),
         html.Div(
             id="tx-stage-flip-frame",
