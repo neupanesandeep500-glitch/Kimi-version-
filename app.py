@@ -3089,14 +3089,33 @@ def _pdf_stacked_bar(pdf, fig_num, title, x_labels, series, colors, y_label):
 
 def _pdf_cover_page(pdf, recs, source_label, filter_summary):
     import datetime
+
     fig = plt.figure(figsize=(11.69, 8.27))
-    fig.text(0.5, 0.72, "Nepal Power Plant & Transmission Line",
-             ha="center", fontsize=22, fontweight="bold")
-    fig.text(0.5, 0.66, "License Status Dashboard — Full Report", ha="center", fontsize=16)
+    y = 0.86  # every line below is placed explicitly, top-anchored, so nothing
+              # can drift into the line above/below it regardless of length
+
+    fig.text(0.5, y, "Nepal Power Plant & Transmission Line",
+             ha="center", va="top", fontsize=22, fontweight="bold")
+    y -= 0.07
+    fig.text(0.5, y, "License Status Dashboard — Full Report",
+             ha="center", va="top", fontsize=16)
+    y -= 0.09
+
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
-    fig.text(0.5, 0.58, f"Generated: {now}", ha="center", fontsize=11, color="#555")
-    fig.text(0.5, 0.53, f"Data source: {source_label}", ha="center", fontsize=11, color="#555")
-    fig.text(0.5, 0.46, f"Filters applied: {filter_summary}", ha="center", fontsize=10, color="#555")
+    fig.text(0.5, y, f"Generated: {now}", ha="center", va="top", fontsize=11, color="#555")
+    y -= 0.045
+
+    # Report shows the authoritative public data source (DoED), matching
+    # the dashboard's own header/footer — not the internal sync mechanism.
+    fig.text(0.5, y, "Data source: www.doed.gov.np", ha="center", va="top",
+              fontsize=11, color="#555", url="https://www.doed.gov.np")
+    y -= 0.045
+
+    wrapped_filters = textwrap.fill(f"Filters applied: {filter_summary}", width=95)
+    n_filter_lines = wrapped_filters.count("\n") + 1
+    fig.text(0.5, y, wrapped_filters, ha="center", va="top", fontsize=10, color="#555")
+    y -= 0.032 * n_filter_lines + 0.035
+
     plants = [r for r in recs if r["type"] != "Transmission Line" and r["status"] not in de.EXTRA_STATUS_ORDER]
     tx = [r for r in recs if r["type"] == "Transmission Line" and r["status"] not in de.EXTRA_STATUS_ORDER]
     op = [r for r in plants if r["status"] == "Operating"]
@@ -3107,7 +3126,10 @@ def _pdf_cover_page(pdf, recs, source_label, filter_summary):
         f"GoN Studied Projects: {sum(1 for r in recs if r['status'] == 'GoN Study Project'):,}",
         f"License Cancelled: {sum(1 for r in recs if r['status'] == 'Cancelled'):,}",
     ]
-    fig.text(0.5, 0.36, "\n".join(kpi_lines), ha="center", fontsize=11, linespacing=1.8)
+    for line in kpi_lines:
+        fig.text(0.5, y, line, ha="center", va="top", fontsize=11)
+        y -= 0.045
+
     fig.text(0.98, 0.02, "Er. Sandeep Neupane", fontsize=8, color="gray",
               ha="right", va="bottom", alpha=0.5)
     pdf.savefig(fig)
