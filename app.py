@@ -1238,7 +1238,7 @@ def build_ticker_segments(loader, recs=None):
             ("SOLAR", "☀", [r for r in op if r["type"] == "Solar"])):
         if not sel:
             continue
-        segs.append((_cat_segment(f"{icon} {tlabel} IN OPERATION", len(sel),
+       segs.append((_cat_segment(f"{icon} {tlabel} IN OPERATION", len(sel),
                                   sum(r['capacity_mw'] or 0 for r in sel)), "#a5f3c4"))
         # Top 5 Provinces / Districts / Local Bodies by installed capacity
         # for this category — resolved from each project's own GIS boundary
@@ -1246,6 +1246,7 @@ def build_ticker_segments(loader, recs=None):
         # raw address text which can be unreliable.
         prov_t, dist_t, local_t = _category_admin_totals(sel)
         for lab, totals in (("Top 5 Provinces", prov_t), ("Top 5 Districts", dist_t),
+                            ("Top 5 Local Bodies", local_t)):
             txt = _fmt_admin_all(totals, top_n=5)
             if txt:
                 segs.append((f"{icon} {tlabel} {lab}: {txt}", "#7be3a2"))
