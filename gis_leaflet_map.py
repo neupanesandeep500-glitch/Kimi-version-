@@ -118,6 +118,10 @@ def build_gis_map_html(records, status_colors, type_colors, province_colors, hei
     --bg:#0f1720; --panel:#16212c; --panel2:#1c2a37; --border:#2a3a48;
     --text:#e7edf3; --muted:#93a4b3; --accent:#3aa6ff; --accent2:#ffb545;
   }}
+  body.light-basemap{{
+    --bg:#f2f5f7; --panel:#ffffff; --panel2:#eef2f5; --border:#d6dee4;
+    --text:#1b2530; --muted:#5c6b78; --accent:#0b6fda; --accent2:#c96f0a;
+  }}
   *{{box-sizing:border-box;}}
   html,body{{margin:0;height:100%;font-family:'Segoe UI',Arial,sans-serif;background:var(--bg);color:var(--text);}}
   #app{{display:flex;height:{height_px}px;}}
@@ -187,6 +191,14 @@ def build_gis_map_html(records, status_colors, type_colors, province_colors, hei
     </div>
 
     <div class="section">
+      <h3>Basemap</h3>
+      <label class="chk"><input type="radio" name="basemap" value="dark" id="bm-dark"> Dark</label>
+      <label class="chk"><input type="radio" name="basemap" value="satellite" id="bm-sat"> Satellite</label>
+      <label class="chk"><input type="radio" name="basemap" value="auto" id="bm-auto"> Auto (match device)</label>
+      <div class="warn" style="color:var(--muted);font-size:10.5px;margin-top:4px;">"Auto" follows your browser/OS light-dark setting; Dark and Satellite stay fixed regardless of device setting.</div>
+    </div>
+
+    <div class="section">
       <h3>Layers</h3>
       <label class="chk"><input type="checkbox" id="toggle-choropleth" checked> Province choropleth</label>
       <label class="chk"><input type="checkbox" id="toggle-district" checked> District boundaries</label>
@@ -231,9 +243,53 @@ const state = {{ stage:new Set(STAGES), type:new Set(TYPES), prov:new Set(PROVS)
 
 // ---------- map ----------
 const map = L.map('map', {{preferCanvas:true}}).setView([28.3,84.0], 7);
-L.tileLayer('https://{{s}}.basemaps.cartocdn.com/dark_all/{{z}}/{{x}}/{{y}}{{r}}.png', {{
-  attribution:'&copy; OpenStreetMap &copy; CARTO', maxZoom:18, subdomains:'abcd'
-}}).addTo(map);
+
+// ---------- basemap (dark / satellite / auto-per-device-preference) ----------
+const BASEMAPS = {{
+  dark: L.tileLayer('https://{{s}}.basemaps.cartocdn.com/dark_all/{{z}}/{{x}}/{{y}}{{r}}.png', {{
+    attribution:'&copy; OpenStreetMap &copy; CARTO', maxZoom:18, subdomains:'abcd'
+  }}),
+  light: L.tileLayer('https://{{s}}.basemaps.cartocdn.com/light_all/{{z}}/{{x}}/{{y}}{{r}}.png', {{
+    attribution:'&copy; OpenStreetMap &copy; CARTO', maxZoom:19, subdomains:'abcd'
+  }}),
+  satellite: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{{z}}/{{y}}/{{x}}', {{
+    attribution:'Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics', maxZoom:19
+  }}),
+}};
+
+let activeBaseKey = null;
+function showBaseTiles(key){{
+  if(activeBaseKey === key) return;
+  if(activeBaseKey) map.removeLayer(BASEMAPS[activeBaseKey]);
+  BASEMAPS[key].addTo(map);
+  activeBaseKey = key;
+  document.body.classList.toggle('light-basemap', key === 'light');
+}}
+
+const prefersLight = window.matchMedia ? window.matchMedia('(prefers-color-scheme: light)') : null;
+function deviceKey(){{ return (prefersLight && prefersLight.matches) ? 'light' : 'dark'; }}
+
+let basemapMode = 'auto'; // one of: 'dark' | 'satellite' | 'auto'
+try {{
+  const saved = sessionStorage.getItem('gisBasemapMode');
+  if(saved === 'dark' || saved === 'satellite' || saved === 'auto') basemapMode = saved;
+}} catch(e){{ /* storage unavailable — fall back to default */ }}
+
+function applyBasemapMode(mode){{
+  basemapMode = mode;
+  try {{ sessionStorage.setItem('gisBasemapMode', mode); }} catch(e){{ /* ignore */ }}
+  showBaseTiles(mode === 'auto' ? deviceKey() : mode);
+}}
+applyBasemapMode(basemapMode);
+
+if(prefersLight && prefersLight.addEventListener){{
+  prefersLight.addEventListener('change', () => {{ if(basemapMode === 'auto') showBaseTiles(deviceKey()); }});
+}}
+
+document.querySelectorAll('input[name="basemap"]').forEach(radio => {{
+  radio.checked = (radio.value === basemapMode);
+  radio.addEventListener('change', e => {{ if(e.target.checked) applyBasemapMode(e.target.value); }});
+}});
 
 // province choropleth
 const provinceLayer = L.geoJSON(PROVINCES_GEOJSON, {{
