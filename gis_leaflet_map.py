@@ -141,16 +141,16 @@ def build_gis_map_html(records, status_colors, type_colors, province_colors, hei
     border-radius:5px;padding:4px 8px;font-size:11px;cursor:pointer;margin-right:6px;}}
   button.small:hover{{border-color:var(--accent);}}
   #map{{flex:1;background:#0a121a;}}
-  .leaflet-popup-content-wrapper{{background:#182430;color:var(--text);border-radius:8px;}}
+  .leaflet-popup-content-wrapper{{background:#182430;color:#e7edf3;border-radius:8px;}}
   .leaflet-popup-tip{{background:#182430;}}
   .pop{{font-size:12.5px;line-height:1.5;max-width:340px;}}
-  .pop h4{{margin:0 0 6px;font-size:14px;color:var(--accent2);border-bottom:1px solid var(--border);padding-bottom:5px;}}
+  .pop h4{{margin:0 0 6px;font-size:14px;color:#ffb545;border-bottom:1px solid #2a3a48;padding-bottom:5px;}}
   .pop table{{border-collapse:collapse;width:100%;}}
-  .pop td{{vertical-align:top;padding:1.5px 4px 1.5px 0;font-size:12px;}}
-  .pop td.k{{color:var(--muted);white-space:nowrap;width:86px;}}
-  .pop .tag{{display:inline-block;background:#233241;border:1px solid var(--border);border-radius:10px;
-    padding:1px 7px;font-size:10.5px;margin:1px 3px 1px 0;color:var(--text);}}
-  .pop .warn{{color:var(--accent2);font-size:10.5px;margin-top:5px;font-style:italic;}}
+  .pop td{{vertical-align:top;padding:1.5px 4px 1.5px 0;font-size:12px;color:#e7edf3;}}
+  .pop td.k{{color:#93a4b3;white-space:nowrap;width:86px;}}
+  .pop .tag{{display:inline-block;background:#233241;border:1px solid #2a3a48;border-radius:10px;
+    padding:1px 7px;font-size:10.5px;margin:1px 3px 1px 0;color:#e7edf3;}}
+  .pop .warn{{color:#ffb545;font-size:10.5px;margin-top:5px;font-style:italic;}}
   .legend-row{{display:flex;align-items:center;gap:6px;font-size:11px;padding:2px 0;color:var(--muted);}}
   #search{{width:100%;padding:6px 8px;background:var(--panel);border:1px solid var(--border);
     border-radius:6px;color:var(--text);font-size:12px;margin-bottom:8px;}}
@@ -164,6 +164,14 @@ def build_gis_map_html(records, status_colors, type_colors, province_colors, hei
   <div id="sidebar">
     <h1>⚡ Nepal Power Project GIS Map</h1>
     <div class="sub">DoED licensing pipeline · province &amp; protected-area overlay</div>
+
+    <div class="section">
+      <h3>Basemap</h3>
+      <label class="chk"><input type="radio" name="basemap" value="dark" id="bm-dark"> Dark</label>
+      <label class="chk"><input type="radio" name="basemap" value="satellite" id="bm-sat"> Satellite</label>
+      <label class="chk"><input type="radio" name="basemap" value="auto" id="bm-auto"> Auto (match device)</label>
+      <div class="warn" style="color:var(--muted);font-size:10.5px;margin-top:4px;">"Auto" follows your browser/OS light-dark setting; Dark and Satellite stay fixed regardless of device setting.</div>
+    </div>
 
     <div class="section">
       <h3>Search</h3>
@@ -209,14 +217,6 @@ def build_gis_map_html(records, status_colors, type_colors, province_colors, hei
       <label class="chk"><input type="radio" name="crs" value="wgs" checked> WGS-84 (map display)</label>
       <label class="chk"><input type="radio" name="crs" value="everest"> Everest 1830 (as surveyed)</label>
       <div class="warn" style="color:var(--muted);font-size:10.5px;margin-top:4px;">Both shown in popups regardless — this only affects which is emphasized.</div>
-    </div>
-
-    <div class="section">
-      <h3>Basemap</h3>
-      <label class="chk"><input type="radio" name="basemap" value="dark" id="bm-dark"> Dark</label>
-      <label class="chk"><input type="radio" name="basemap" value="satellite" id="bm-sat"> Satellite</label>
-      <label class="chk"><input type="radio" name="basemap" value="auto" id="bm-auto"> Auto (match device)</label>
-      <div class="warn" style="color:var(--muted);font-size:10.5px;margin-top:4px;">"Auto" follows your browser/OS light-dark setting; Dark and Satellite stay fixed regardless of device setting.</div>
     </div>
 
     <div class="section">
@@ -362,11 +362,11 @@ const markers = [];
 
 function fmtPct(obj){{
   const keys = Object.keys(obj||{{}});
-  if(!keys.length) return '<span style="color:var(--muted)">none</span>';
+  if(!keys.length) return '<span style="color:#93a4b3">none</span>';
   return keys.map(k=>`<span class="tag">${{k}}: ${{obj[k]}}%</span>`).join(' ');
 }}
 function fmtLB(list){{
-  if(!list || !list.length) return '<span style="color:var(--muted)">—</span>';
+  if(!list || !list.length) return '<span style="color:#93a4b3">—</span>';
   return list.map(l=>`<span class="tag">${{l.name}} (${{l.type}}, ${{l.district}}): ${{l.pct}}%</span>`).join(' ');
 }}
 function popupHtml(p){{
