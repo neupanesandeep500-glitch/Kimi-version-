@@ -413,24 +413,38 @@ function matchesFocus(p){{
 
 function applyFilters(){{
   markerLayer.clearLayers();
-  let shown=0, cap=0;
+  let shown=0, cap=0, paCount=0;
   const q = state.q.trim().toLowerCase();
   markers.forEach(m=>{{
     const p = m._proj;
     let ok = state.stage.has(p.st) && state.type.has(p.ty) && (p.prov ? state.prov.has(p.prov) : true);
-    if(ok) ok = matchesFocus(p);
     if(ok && q){{
       const lbNames = (p.lbpct||[]).map(l=>l.name).join(' ');
       const distNames = Object.keys(p.distpct||{{}}).join(' ');
       const hay = (p.n+' '+(p.pr||'')+' '+distNames+' '+lbNames).toLowerCase();
       ok = hay.includes(q);
     }}
-    if(ok){{ markerLayer.addLayer(m); shown++; cap += (p.cap||0); }}
+    if(!ok) return;
+
+    // Focus mode never hides a project's license boundary — it only
+    // highlights the ones inside the focused area and fades the rest,
+    // so nothing disappears while you're zoomed into a specific area.
+    const inFocus = !state.focus || matchesFocus(p);
+    const color = STAGE_COLORS[p.st] || '#ccc';
+    m.setStyle(inFocus
+      ? {{ color:'#0b131a', weight:1, fillColor: color, fillOpacity:0.55, opacity:1 }}
+      : {{ color:'#0b131a', weight:1, fillColor: color, fillOpacity:0.07, opacity:0.25 }});
+    markerLayer.addLayer(m);
+
+    if(inFocus){{
+      shown++; cap += (p.cap||0);
+      if(Object.keys(p.papct||{{}}).length) paCount++;
+    }}
   }});
   document.getElementById('stats').innerHTML =
     `Showing <b>${{shown}}</b> / ${{PROJECTS.length}} projects<br>`+
     `Total capacity shown: <b>${{cap.toFixed(1)}} MW</b><br>`+
-    `Protected-zone overlap: <b>${{markers.filter(m=>markerLayer.hasLayer(m)&&Object.keys(m._proj.papct||{{}}).length).length}}</b> project(s)`;
+    `Protected-zone overlap: <b>${{paCount}}</b> project(s)`;
 }}
 
 // ---------- filter UI ----------
