@@ -690,10 +690,13 @@ app.layout = dbc.Container(fluid=True, children=[
             ], className="mb-0"),
         ]),
 
-        html.Hr(style={"borderColor": "#3d5a99", "opacity": 0.4, "margin": "10px 0"}),
+       html.Hr(style={"borderColor": "#3d5a99", "opacity": 0.4, "margin": "10px 0"}),
         html.Div("© 2026 Er. Sandeep Neupane. All rights reserved.",
                   className="small text-center"),
     ]),
+])
+
+# ── DATA-SOURCE CALLBACKS ──────────────────────────────────────────────────
 
 # ── DATA-SOURCE CALLBACKS ──────────────────────────────────────────────────
 @app.callback(
