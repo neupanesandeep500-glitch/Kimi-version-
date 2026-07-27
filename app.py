@@ -1231,9 +1231,8 @@ def build_ticker_segments(loader, recs=None):
     segs.append((_cat_segment("🚫 LICENCE CANCELLED", len(canc),
                               sum(r['capacity_mw'] or 0 for r in canc)), "#ff8a80"))
 
-    op = [r for r in plants if r["status"] == "Operating"]
-
-   for tlabel, icon, sel in (
+   op = [r for r in plants if r["status"] == "Operating"]
+    for tlabel, icon, sel in (
             ("HYDRO", "💧", [r for r in op if str(r["type"]).startswith("Hydro")]),
             ("SOLAR", "☀", [r for r in op if r["type"] == "Solar"])):
         if not sel:
