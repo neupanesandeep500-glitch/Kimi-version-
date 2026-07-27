@@ -13,6 +13,10 @@ status/province backgrounds) can be bundled as a single zip on Google
 Drive and auto-restored on every startup via DEFAULT_ASSETS_DRIVE_URL —
 so they survive Render's ephemeral disk on cold starts without needing
 to be re-uploaded through /admin each time.
+
+TEMPORARY: ensure_assets_loaded()/_register_bundled_assets() below have
+debug print() statements added to diagnose why images aren't loading.
+Remove these once the issue is found and fixed.
 """
 
 import os
@@ -103,10 +107,6 @@ def ensure_gis_loaded(force=False):
         return
 
     try:
-        # ── Load districts, provinces, and local bodies from bundled data
-        # (ALWAYS works). Loading districts alone left provinces_loaded/
-        # localbodies_loaded False, so every point-in-polygon lookup other
-        # than the single placeholder district fell back to "Unspecified".
         from gis_bundled import (NEPAL_DISTRICTS_GEOJSON, NEPAL_PROVINCES_GEOJSON,
                                   NEPAL_LOCALBODIES_GEOJSON, NEPAL_BOUNDARY_GEOJSON,
                                   NEPAL_CLAIMED_AREA_GEOJSON)
@@ -121,7 +121,6 @@ def ensure_gis_loaded(force=False):
             STATE["gis_loaded"] = True
             STATE["gis_load_error"] = None
 
-        # ── Try admin-uploaded zip as override (higher detail) ──
         if os.path.exists(GIS_ZIP_PATH):
             try:
                 _check_zip_size(GIS_ZIP_PATH, "GIS package")
@@ -130,7 +129,6 @@ def ensure_gis_loaded(force=False):
                     de.GIS = override
                     STATE["gis_loaded"] = True
             except Exception as e:
-                # Keep bundled data, log the error
                 STATE["gis_load_error"] = f"Admin GIS override failed: {e}. Using bundled data."
 
     except Exception as exc:
@@ -138,7 +136,6 @@ def ensure_gis_loaded(force=False):
         if not STATE["gis_loaded"]:
             STATE["gis_load_error"] = str(exc)
 
-    # ── Load protected areas ──
     try:
         from gis_bundled import NEPAL_PROTECTED_AREAS_GEOJSON
         candidate = copy.copy(de.GIS)
@@ -148,7 +145,6 @@ def ensure_gis_loaded(force=False):
             STATE["pa_loaded"] = True
             STATE["pa_load_error"] = None
 
-        # Try admin-uploaded override
         if os.path.exists(PA_ZIP_PATH):
             try:
                 _check_zip_size(PA_ZIP_PATH, "Protected-area package")
@@ -170,20 +166,27 @@ def ensure_gis_loaded(force=False):
 def ensure_assets_loaded():
     """Pull a zip of branding/category images from Google Drive (if
     DEFAULT_ASSETS_DRIVE_URL is set) and extract it into ASSETS_DIR, then
-    register the recognized files into STATE — the same effect as
-    re-uploading each one through /admin, but automatic on every startup.
-    Safe to call even if no zip / no matching files are found; it's a
-    no-op in that case and admin-uploaded images still work as normal.
-    """
+    register the recognized files into STATE. TEMPORARY debug prints
+    added below — remove once the issue is diagnosed."""
     url = os.environ.get("DEFAULT_ASSETS_DRIVE_URL")
+    print(f"[ASSETS DEBUG] DEFAULT_ASSETS_DRIVE_URL = {url!r}", flush=True)
     if not url:
+        print("[ASSETS DEBUG] No URL set — skipping.", flush=True)
         return
     try:
-        de.download_google_drive_file(url, ASSETS_ZIP_PATH)
+        result = de.download_google_drive_file(url, ASSETS_ZIP_PATH)
+        print(f"[ASSETS DEBUG] download_google_drive_file returned: {result!r}", flush=True)
+        print(f"[ASSETS DEBUG] Zip exists at {ASSETS_ZIP_PATH}: {os.path.exists(ASSETS_ZIP_PATH)}", flush=True)
+        if os.path.exists(ASSETS_ZIP_PATH):
+            print(f"[ASSETS DEBUG] Zip size: {os.path.getsize(ASSETS_ZIP_PATH)} bytes", flush=True)
         with zipfile.ZipFile(ASSETS_ZIP_PATH) as zf:
+            names = zf.namelist()
+            print(f"[ASSETS DEBUG] Zip contents: {names}", flush=True)
             zf.extractall(ASSETS_DIR)
+        print(f"[ASSETS DEBUG] ASSETS_DIR contents after extract: {os.listdir(ASSETS_DIR)}", flush=True)
         _register_bundled_assets()
     except Exception:
+        print("[ASSETS DEBUG] EXCEPTION during asset load:", flush=True)
         traceback.print_exc()
 
 
@@ -229,6 +232,8 @@ def _register_bundled_assets():
         updates["status_bg"] = status_bg
     if province_bg:
         updates["province_bg"] = province_bg
+
+    print(f"[ASSETS DEBUG] Registered updates: {updates}", flush=True)
 
     if updates:
         STATE.update(updates)
@@ -362,25 +367,14 @@ def reload_cached_on_startup():
 def bootstrap_on_startup():
     """Zero-dependency startup. GIS loads from bundled data immediately.
     Workbook loads from env vars or cache if available."""
-    # Restore anything previously configured via the admin panel (logo, flag,
-    # hero background, per-type/status/province backgrounds, marquee toggle,
-    # visitor count) so it survives a process/dyno restart.
     cfg = _sync_state_from_config()
     sheet_url = cfg.get("gs_url") or os.environ.get("DEFAULT_SHEET_URL")
     gis_url = cfg.get("gis_drive_url") or os.environ.get("DEFAULT_GIS_DRIVE_URL")
     pa_url = cfg.get("pa_drive_url") or os.environ.get("DEFAULT_PA_DRIVE_URL")
 
-    # ── GIS FIRST (bundled data guarantees this always works) ──
     ensure_gis_loaded()
-
-    # ── ASSETS NEXT (logo/flag/hero/category backgrounds from Drive,
-    # if DEFAULT_ASSETS_DRIVE_URL is set) — restores branding images
-    # that would otherwise be wiped by Render's ephemeral disk on
-    # every cold start. Runs before the header/first render so the
-    # branding is in place immediately, not just after a re-upload. ──
     ensure_assets_loaded()
 
-    # Try Drive overrides if configured
     if gis_url:
         try:
             load_gis_from_drive(gis_url)
@@ -392,7 +386,6 @@ def bootstrap_on_startup():
         except Exception:
             traceback.print_exc()
 
-    # ── Workbook LAST (needs GIS for district/province resolution) ──
     if sheet_url:
         try:
             load_from_google_sheet(sheet_url)
@@ -447,9 +440,6 @@ def start_background_refresh():
 
 import datetime as _dt
 
-# Nepal Standard Time is a fixed UTC+5:45 offset (no daylight-saving rules),
-# so a plain fixed-offset timezone is correct and avoids depending on an
-# IANA tzdata install being present in the deployment environment.
 NEPAL_TZ = _dt.timezone(_dt.timedelta(hours=5, minutes=45), name="NPT")
 
 
