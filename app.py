@@ -951,9 +951,20 @@ def render_tab(tab, f_type, f_status, f_province, f_capacity, f_tx_length, f_yea
                 html.Pre(tb, className="small mt-2", style={"whiteSpace": "pre-wrap"}),
             ], color="danger", className="mt-3"), gis_controls_style, sidebar_style, sidebar_md, content_md)
 
-    recs = get_filtered_records(f_type, f_status, f_province, f_capacity, f_year, f_search,
-                                 f_date_from, f_date_to, f_cod_from, f_cod_to, f_tx_length,
-                                 f_district, f_local)
+    # GIS tab: intentionally bypass the sidebar's own filter panel (f-type,
+    # f-status, f-province, f-capacity, f-year, f-search, f-date/cod range,
+    # f-district, f-local). That panel is hidden on this tab (see above) but
+    # its values were still being fed into get_filtered_records() before,
+    # which silently re-applied the "Other tabs'" filters to the map. The
+    # GIS Map has its own independent stage/type/province/search filters
+    # built into its Leaflet sidebar, so it should always start from the
+    # full active record set, same as Overview.
+    if tab == "gis":
+        recs = [r for r in loader.records if r["status"] not in de.EXTRA_STATUS_ORDER]
+    else:
+        recs = get_filtered_records(f_type, f_status, f_province, f_capacity, f_year, f_search,
+                                     f_date_from, f_date_to, f_cod_from, f_cod_to, f_tx_length,
+                                     f_district, f_local)
     if not recs:
         return (dbc.Alert("No projects match the current filters.", color="warning"),
                  gis_controls_style, sidebar_style, sidebar_md, content_md)
