@@ -1198,8 +1198,6 @@ def _fmt_admin_all(totals, top_n=None):
     if top_n:
         ordered = ordered[:top_n]
     return ", ".join(f"{name} ({mw:,.0f} MW)" for name, mw in ordered)
-
-
 def build_ticker_segments(loader, recs=None):
     all_recs = recs if recs is not None else loader.records
     plants = [r for r in all_recs if r["type"] != "Transmission Line" and r["status"] in de.STATUS_ORDER]
@@ -1210,7 +1208,6 @@ def build_ticker_segments(loader, recs=None):
 
     segs = [(_cat_segment("⚡ ACTIVE POWER PLANTS", len(plants),
                           sum(r['capacity_mw'] or 0 for r in plants)), "#ffd166")]
-    # REQ 4: Ordered stages in ticker
     for st in STAGE_DISPLAY_ORDER:
         if st not in de.STATUS_ORDER:
             continue
@@ -1231,24 +1228,22 @@ def build_ticker_segments(loader, recs=None):
     segs.append((_cat_segment("🚫 LICENCE CANCELLED", len(canc),
                               sum(r['capacity_mw'] or 0 for r in canc)), "#ff8a80"))
 
-   op = [r for r in plants if r["status"] == "Operating"]
+    op = [r for r in plants if r["status"] == "Operating"]
+
     for tlabel, icon, sel in (
             ("HYDRO", "💧", [r for r in op if str(r["type"]).startswith("Hydro")]),
             ("SOLAR", "☀", [r for r in op if r["type"] == "Solar"])):
         if not sel:
             continue
         segs.append((_cat_segment(f"{icon} {tlabel} IN OPERATION", len(sel),
-                                   sum(r['capacity_mw'] or 0 for r in sel)), "#a5f3c4"))
-        # Top 5 Provinces / Districts / Local Bodies by installed capacity
-        # for this category — resolved from each project's own GIS boundary
-        # overlap (province_pct/district_pct/local_pct), not the sheet's
-        # raw address text which can be unreliable.
+                                  sum(r['capacity_mw'] or 0 for r in sel)), "#a5f3c4"))
         prov_t, dist_t, local_t = _category_admin_totals(sel)
         for lab, totals in (("Top 5 Provinces", prov_t), ("Top 5 Districts", dist_t),
                             ("Top 5 Local Bodies", local_t)):
             txt = _fmt_admin_all(totals, top_n=5)
             if txt:
                 segs.append((f"{icon} {tlabel} {lab}: {txt}", "#7be3a2"))
+
     ty_, tm_, td_ = de.today_bs()
 
     def _cod_key(r):
@@ -1307,8 +1302,7 @@ def build_ticker_segments(loader, recs=None):
                      f"{textwrap.shorten(r['promoter'] or '—', 26)} • "
                      f"COD {de.bs_str(r['cod_bs'])}", "#c9b6ff"))
     return segs
-
-
+    
 _TICKER_BG_RGB = (0x10, 0x17, 0x26)  # matches .ticker-bar background: #101726
 
 
