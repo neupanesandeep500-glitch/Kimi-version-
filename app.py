@@ -235,6 +235,10 @@ footer.site-footer a { color: #8fb2ff; text-decoration: none; margin-right: 16px
 footer.site-footer a:hover { text-decoration: underline; }
 .footer-visitor-counter { color: #ffd166; font-size: 15px; font-weight: 700; letter-spacing: 0.02em; }
 .footer-last-update { color: #9fd8ff; font-size: 14px; font-weight: 600; margin-top: 4px; }
+.footer-disclaimer { border-top: 1px solid rgba(183,196,224,0.25); margin-top: 14px;
+  padding-top: 12px; font-size: 12px; line-height: 1.6; color: #9aa8c7; text-align: justify; }
+.footer-disclaimer strong { color: #c7d3ec; }
+.footer-disclaimer a { color: #8fb2ff; }
 
 /* ── Status label styles with effects ─────────────────────────────────────── */
 .status-label-operating { color: #2e7d32; font-weight: 800; text-shadow: 0 0 8px rgba(46,125,50,0.4); }
