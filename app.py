@@ -1244,9 +1244,8 @@ def build_ticker_segments(loader, recs=None):
         # for this category — resolved from each project's own GIS boundary
         # overlap (province_pct/district_pct/local_pct), not the sheet's
         # raw address text which can be unreliable.
-       prov_t, dist_t, local_t = _category_admin_totals(sel)
+        prov_t, dist_t, local_t = _category_admin_totals(sel)
         for lab, totals in (("Top 5 Provinces", prov_t), ("Top 5 Districts", dist_t),
-                            ("Top 5 Local Bodies", local_t)):
             txt = _fmt_admin_all(totals, top_n=5)
             if txt:
                 segs.append((f"{icon} {tlabel} {lab}: {txt}", "#7be3a2"))
