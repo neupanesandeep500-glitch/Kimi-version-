@@ -1262,14 +1262,13 @@ def build_ticker_segments(loader, recs=None):
     def _added(year, until):
         sel = [r for r in op if _cod_key(r) and (year, 1, 1) <= _cod_key(r) <= until]
         return sel
-
-    cur_sel = _added(ty_, (ty_, tm_, td_))
+cur_sel = _added(ty_, (ty_, tm_, td_))
     prv_sel = _added(ty_ - 1, (ty_ - 1, tm_, td_))
     n_cur = len(cur_sel); mw_cur = sum(r["capacity_mw"] or 0 for r in cur_sel)
     n_prv = len(prv_sel); mw_prv = sum(r["capacity_mw"] or 0 for r in prv_sel)
     d_mw = mw_cur - mw_prv
     pct = (d_mw / mw_prv * 100.0) if mw_prv else (100.0 if mw_cur else 0.0)
-   arrow, acol = ("▲", "#2ecc71") if d_mw >= 0 else ("▼", "#ff6b6b")
+    arrow, acol = ("▲", "#2ecc71") if d_mw >= 0 else ("▼", "#ff6b6b")
     segs.append((f"📈 Capacity added this year {ty_}: "
                  f"{mw_cur:,.0f} MW ({n_cur:,} Projects)  vs  same period {ty_-1}: "
                  f"{mw_prv:,.0f} MW ({n_prv:,})  →  {arrow} {abs(d_mw):,.0f} MW "
@@ -1280,7 +1279,7 @@ def build_ticker_segments(loader, recs=None):
                               sum(r['capacity_mw'] or 0 for r in last_full_year)), "#ffe08a"))
 
     yr_sel = cur_sel
-    segs.append((_cat_segment(f"🆕 In operation this year {ty_}", len(yr_sel), 
+    segs.append((_cat_segment(f"🆕 In operation this year {ty_}", len(yr_sel),
                               sum(r['capacity_mw'] or 0 for r in yr_sel)), "#ffe08a"))
 
     largest_this_year = sorted(cur_sel, key=lambda r: r["capacity_mw"] or 0, reverse=True)[:1]
