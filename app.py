@@ -638,7 +638,8 @@ app.layout = dbc.Container(fluid=True, children=[
     dcc.Interval(id="refresh-poll", n_intervals=0, interval=36000_000),
     dcc.Interval(id="type-flip-interval", n_intervals=0, interval=6_000),
     dcc.Interval(id="province-flip-interval", n_intervals=0, interval=6_000),
-    html.Footer(className="site-footer", children=[
+   
+   html.Footer(className="site-footer", children=[
         dbc.Row([
             dbc.Col(md=8, children=[
                 html.Div("Useful links — Nepal Energy Sector", className="fw-semibold mb-1"),
@@ -652,7 +653,7 @@ app.layout = dbc.Container(fluid=True, children=[
                        href="https://doed.gov.np", target="_blank", className="d-block"),
                 html.A("Nepal Electricity Authority (NEA)",
                        href="https://nea.org.np", target="_blank", className="d-block"),
-                  html.A("Alternative Energy Promotion Center (AEPC)",
+                html.A("Alternative Energy Promotion Center (AEPC)",
                        href="https://aepc.gov.np", target="_blank", className="d-block"),
             ]),
             dbc.Col(md=4, className="text-md-end", children=[
@@ -660,12 +661,35 @@ app.layout = dbc.Container(fluid=True, children=[
                 html.Div(id="footer-last-update", className="footer-last-update"),
             ]),
         ]),
+
+        # ── Disclaimer ───────────────────────────────────────────────
+        html.Div(className="footer-disclaimer", children=[
+            html.P([
+                html.Strong("Disclaimer: "),
+                "The information presented on this website — including power plant status, "
+                "capacity, and licensing details — is compiled from data published by the "
+                "Department of Electricity Development (DoED), Government of Nepal (",
+                html.A("www.doed.gov.np", href="https://www.doed.gov.np", target="_blank"),
+                "). This is an independent, unofficial platform intended only to give a "
+                "general overview of Nepal's electricity sector; it is not affiliated with "
+                "or endorsed by DoED or any government body. While reasonable care has been "
+                "taken in processing this data, we do not guarantee its accuracy, "
+                "completeness, or currency, and accept no liability for errors, omissions, "
+                "or any decisions made based on it.",
+            ], className="mb-2"),
+            html.P([
+                "The GIS map on this site is indicative only, meant to give a general sense "
+                "of plant locations.  For authoritative records, please refer "
+                "to ",
+                html.A("www.doed.gov.np", href="https://www.doed.gov.np", target="_blank"),
+                " or contact DoED directly.",
+            ], className="mb-0"),
+        ]),
+
         html.Hr(style={"borderColor": "#3d5a99", "opacity": 0.4, "margin": "10px 0"}),
         html.Div("© 2026 Er. Sandeep Neupane. All rights reserved.",
                   className="small text-center"),
     ]),
-])
-
 
 # ── DATA-SOURCE CALLBACKS ──────────────────────────────────────────────────
 @app.callback(
