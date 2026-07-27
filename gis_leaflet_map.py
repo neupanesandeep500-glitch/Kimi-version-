@@ -154,6 +154,8 @@ def build_gis_map_html(records, status_colors, type_colors, province_colors, hei
   .legend-row{{display:flex;align-items:center;gap:6px;font-size:11px;padding:2px 0;color:var(--muted);}}
   #search{{width:100%;padding:6px 8px;background:var(--panel);border:1px solid var(--border);
     border-radius:6px;color:var(--text);font-size:12px;margin-bottom:8px;}}
+  select.sel{{width:100%;padding:6px 8px;background:var(--panel);border:1px solid var(--border);
+    border-radius:6px;color:var(--text);font-size:12px;margin-bottom:7px;}}
   ::-webkit-scrollbar{{width:8px;}} ::-webkit-scrollbar-thumb{{background:#2a3a48;border-radius:4px;}}
 </style>
 </head>
@@ -166,6 +168,25 @@ def build_gis_map_html(records, status_colors, type_colors, province_colors, hei
     <div class="section">
       <h3>Search</h3>
       <input id="search" placeholder="Project / promoter / district…"/>
+    </div>
+
+    <div class="section" id="focus-section">
+      <h3>Focus / Isolate Area</h3>
+      <select id="focus-level" class="sel">
+        <option value="province">Province</option>
+        <option value="district">District</option>
+        <option value="local">Local Body</option>
+        <option value="pa">Protected Area (core)</option>
+        <option value="buffer">Buffer Zone</option>
+      </select>
+      <select id="focus-target" class="sel">
+        <option value="">— choose —</option>
+      </select>
+      <div style="display:flex;gap:6px;">
+        <button class="small" id="btn-focus">Focus</button>
+        <button class="small" id="btn-clear-focus">Clear</button>
+      </div>
+      <div id="focus-summary" style="font-size:10.5px;color:var(--muted);margin-top:6px;line-height:1.4;"></div>
     </div>
 
     <div class="section">
@@ -239,10 +260,11 @@ const STAGES = DATA.STAGES;
 const TYPES = DATA.TYPES;
 const PROVS = DATA.PROVS;
 
-const state = {{ stage:new Set(STAGES), type:new Set(TYPES), prov:new Set(PROVS), q:"" }};
+const state = {{ stage:new Set(STAGES), type:new Set(TYPES), prov:new Set(PROVS), q:"", focus:null }};
 
 // ---------- map ----------
-const map = L.map('map', {{preferCanvas:true}}).setView([28.3,84.0], 7);
+const HOME_VIEW = {{ center:[28.3,84.0], zoom:7 }};
+const map = L.map('map', {{preferCanvas:true}}).setView(HOME_VIEW.center, HOME_VIEW.zoom);
 
 // ---------- basemap (dark / satellite / auto-per-device-preference) ----------
 const BASEMAPS = {{
@@ -292,22 +314,25 @@ document.querySelectorAll('input[name="basemap"]').forEach(radio => {{
 }});
 
 // province choropleth
+const provinceStyleFn = f => ({{ color: PROV_COLORS[f.properties.name]||'#888', weight:1.6,
+                 fillColor: PROV_COLORS[f.properties.name]||'#888', fillOpacity:0.09 }});
 const provinceLayer = L.geoJSON(PROVINCES_GEOJSON, {{
-  style: f => ({{ color: PROV_COLORS[f.properties.name]||'#888', weight:1.6,
-                 fillColor: PROV_COLORS[f.properties.name]||'#888', fillOpacity:0.09 }}),
+  style: provinceStyleFn,
   onEachFeature: (f, layer) => layer.bindTooltip(f.properties.name, {{sticky:true}})
 }}).addTo(map);
 
 // district boundaries (outline only)
+const districtStyleFn = () => ({{ color:'#9fb3c8', weight:0.8, fillOpacity:0, opacity:0.55 }});
 const districtLayer = L.geoJSON(DISTRICTS_GEOJSON, {{
-  style: () => ({{ color:'#9fb3c8', weight:0.8, fillOpacity:0, opacity:0.55 }}),
+  style: districtStyleFn,
   onEachFeature: (f, layer) => layer.bindTooltip(`${{f.properties.name}} district (${{f.properties.province}})`, {{sticky:true}})
 }}).addTo(map);
 
 // local body boundaries (outline only, off by default)
+const localStyleFn = f => ({{ color: f.properties.type && f.properties.type.includes('Rural') ? '#7dd3fc' : '#fbbf24',
+                 weight:0.6, fillOpacity:0, opacity:0.6 }});
 const localLayer = L.geoJSON(LOCALS_GEOJSON, {{
-  style: f => ({{ color: f.properties.type && f.properties.type.includes('Rural') ? '#7dd3fc' : '#fbbf24',
-                 weight:0.6, fillOpacity:0, opacity:0.6 }}),
+  style: localStyleFn,
   onEachFeature: (f, layer) => layer.bindTooltip(`${{f.properties.name}} — ${{f.properties.type}}<br>${{f.properties.district}} (${{f.properties.province}})`, {{sticky:true}})
 }});
 
@@ -319,13 +344,15 @@ const claimedLayer = L.geoJSON(CLAIMED_AREA_GEOJSON, {{
 const coreFeatures = PA_GEOJSON.features.filter(f => f.properties.category !== "Buffer Zone");
 const bufferFeatures = PA_GEOJSON.features.filter(f => f.properties.category === "Buffer Zone");
 
+const paCoreStyleFn = () => ({{ color:'#e11d48', weight:1, fillColor:'#e11d48', fillOpacity:0.32 }});
 const paCoreLayer = L.geoJSON({{type:"FeatureCollection", features: coreFeatures}}, {{
-  style: () => ({{ color:'#e11d48', weight:1, fillColor:'#e11d48', fillOpacity:0.32 }}),
+  style: paCoreStyleFn,
   onEachFeature: (f, layer) => layer.bindTooltip(`${{f.properties.name}} (${{f.properties.category}})`, {{sticky:true}})
 }}).addTo(map);
 
+const paBufferStyleFn = () => ({{ color:'#f59e0b', weight:1, dashArray:'4,3', fillColor:'#f59e0b', fillOpacity:0.16 }});
 const paBufferLayer = L.geoJSON({{type:"FeatureCollection", features: bufferFeatures}}, {{
-  style: () => ({{ color:'#f59e0b', weight:1, dashArray:'4,3', fillColor:'#f59e0b', fillOpacity:0.16 }}),
+  style: paBufferStyleFn,
   onEachFeature: (f, layer) => layer.bindTooltip(`${{f.properties.name}} — 1st-stage buffer`, {{sticky:true}})
 }}).addTo(map);
 
@@ -374,6 +401,16 @@ PROJECTS.forEach(p=>{{
   markers.push(rect);
 }});
 
+function matchesFocus(p){{
+  if(!state.focus) return true;
+  const f = state.focus;
+  if(f.level === 'province') return !!(p.provpct && (f.name in p.provpct));
+  if(f.level === 'district') return !!(p.distpct && (f.name in p.distpct));
+  if(f.level === 'local') return !!(p.lbpct && p.lbpct.some(l => l.name === f.name && l.district === f.district));
+  if(f.level === 'pa' || f.level === 'buffer') return !!(p.papct && (f.name in p.papct));
+  return true;
+}}
+
 function applyFilters(){{
   markerLayer.clearLayers();
   let shown=0, cap=0;
@@ -381,6 +418,7 @@ function applyFilters(){{
   markers.forEach(m=>{{
     const p = m._proj;
     let ok = state.stage.has(p.st) && state.type.has(p.ty) && (p.prov ? state.prov.has(p.prov) : true);
+    if(ok) ok = matchesFocus(p);
     if(ok && q){{
       const lbNames = (p.lbpct||[]).map(l=>l.name).join(' ');
       const distNames = Object.keys(p.distpct||{{}}).join(' ');
@@ -428,6 +466,7 @@ document.getElementById('btn-reset').addEventListener('click', ()=>{{
   state.stage = new Set(STAGES); state.type = new Set(TYPES); state.prov = new Set(PROVS); state.q="";
   document.getElementById('search').value="";
   document.querySelectorAll('#sidebar input[type=checkbox][data-v]').forEach(c=>c.checked=true);
+  clearFocus();
   applyFilters();
 }});
 document.getElementById('toggle-choropleth').addEventListener('change', e=>{{
@@ -445,6 +484,117 @@ document.getElementById('toggle-pa').addEventListener('change', e=>{{
 document.getElementById('toggle-buffer').addEventListener('change', e=>{{
   if(e.target.checked) paBufferLayer.addTo(map); else map.removeLayer(paBufferLayer);
 }});
+
+// ---------- focus / isolate mode ----------
+const FOCUS_LAYER_INFO = {{
+  province: {{ layer: () => provinceLayer, styleFn: provinceStyleFn, checkbox: 'toggle-choropleth' }},
+  district: {{ layer: () => districtLayer, styleFn: districtStyleFn, checkbox: 'toggle-district' }},
+  local:    {{ layer: () => localLayer,    styleFn: localStyleFn,    checkbox: 'toggle-local' }},
+  pa:       {{ layer: () => paCoreLayer,   styleFn: paCoreStyleFn,   checkbox: 'toggle-pa' }},
+  buffer:   {{ layer: () => paBufferLayer, styleFn: paBufferStyleFn, checkbox: 'toggle-buffer' }},
+}};
+
+function isolateBoundaryLayer(geoLayer, matchFeature, level){{
+  geoLayer.eachLayer(l => {{
+    const props = l.feature && l.feature.properties;
+    if(!props) return;
+    const isMatch = level === 'local'
+      ? (props.name === matchFeature.properties.name && props.district === matchFeature.properties.district)
+      : (props.name === matchFeature.properties.name);
+    if(isMatch){{
+      l.setStyle({{ weight:3, opacity:1, fillOpacity:0.28 }});
+      l.bringToFront();
+    }} else {{
+      l.setStyle({{ weight:0.4, opacity:0.12, fillOpacity:0.02 }});
+    }}
+  }});
+}}
+
+function resetBoundaryLayer(geoLayer, styleFn){{
+  geoLayer.eachLayer(l => {{ if(l.feature) l.setStyle(styleFn(l.feature)); }});
+}}
+
+function setFocusOptions(level){{
+  const sel = document.getElementById('focus-target');
+  let items = [];
+  if(level === 'province'){{
+    items = PROVINCES_GEOJSON.features.map(f => ({{ label:f.properties.name, value:f.properties.name }}));
+  }} else if(level === 'district'){{
+    items = DISTRICTS_GEOJSON.features.map(f => ({{ label:`${{f.properties.name}} (${{f.properties.province}})`, value:f.properties.name }}));
+  }} else if(level === 'local'){{
+    items = LOCALS_GEOJSON.features.map(f => ({{ label:`${{f.properties.name}} — ${{f.properties.district}}`, value:`${{f.properties.name}}@@${{f.properties.district}}` }}));
+  }} else if(level === 'pa'){{
+    items = PA_GEOJSON.features.filter(f => f.properties.category !== 'Buffer Zone')
+      .map(f => ({{ label:f.properties.name, value:f.properties.name }}));
+  }} else if(level === 'buffer'){{
+    items = PA_GEOJSON.features.filter(f => f.properties.category === 'Buffer Zone')
+      .map(f => ({{ label:f.properties.name, value:f.properties.name }}));
+  }}
+  items.sort((a,b) => a.label.localeCompare(b.label));
+  sel.innerHTML = '<option value="">— choose —</option>' +
+    items.map(it => `<option value="${{it.value.replace(/"/g,'&quot;')}}">${{it.label}}</option>`).join('');
+}}
+
+function clearFocus(){{
+  if(!state.focus) return;
+  const info = FOCUS_LAYER_INFO[state.focus.level];
+  if(info) resetBoundaryLayer(info.layer(), info.styleFn);
+  state.focus = null;
+  document.getElementById('focus-summary').textContent = '';
+  document.getElementById('focus-target').value = '';
+  map.setView(HOME_VIEW.center, HOME_VIEW.zoom);
+  applyFilters();
+}}
+
+function applyFocus(level, raw){{
+  if(!raw) return;
+  let name, district, feature;
+  if(level === 'local'){{
+    const parts = raw.split('@@');
+    name = parts[0]; district = parts[1];
+    feature = LOCALS_GEOJSON.features.find(f => f.properties.name === name && f.properties.district === district);
+  }} else if(level === 'province'){{
+    name = raw;
+    feature = PROVINCES_GEOJSON.features.find(f => f.properties.name === name);
+  }} else if(level === 'district'){{
+    name = raw;
+    feature = DISTRICTS_GEOJSON.features.find(f => f.properties.name === name);
+  }} else if(level === 'pa'){{
+    name = raw;
+    feature = PA_GEOJSON.features.find(f => f.properties.name === name && f.properties.category !== 'Buffer Zone');
+  }} else if(level === 'buffer'){{
+    name = raw;
+    feature = PA_GEOJSON.features.find(f => f.properties.name === name && f.properties.category === 'Buffer Zone');
+  }}
+  if(!feature) return;
+
+  // undo any previous focus's dimming before applying the new one
+  if(state.focus){{
+    const prevInfo = FOCUS_LAYER_INFO[state.focus.level];
+    if(prevInfo) resetBoundaryLayer(prevInfo.layer(), prevInfo.styleFn);
+  }}
+
+  const info = FOCUS_LAYER_INFO[level];
+  const cb = document.getElementById(info.checkbox);
+  if(cb && !cb.checked){{ cb.checked = true; cb.dispatchEvent(new Event('change')); }}
+
+  map.fitBounds(L.geoJSON(feature).getBounds(), {{ padding:[24,24], maxZoom:13 }});
+  isolateBoundaryLayer(info.layer(), feature, level);
+
+  state.focus = {{ level, name, district }};
+  applyFilters();
+
+  const label = level === 'local' ? `${{name}} (${{district}})` : name;
+  document.getElementById('focus-summary').textContent =
+    `Focused on ${{label}}. Map and Summary now reflect only this area — click Clear to return to the national view.`;
+}}
+
+document.getElementById('focus-level').addEventListener('change', e => setFocusOptions(e.target.value));
+setFocusOptions(document.getElementById('focus-level').value);
+document.getElementById('btn-focus').addEventListener('click', () => {{
+  applyFocus(document.getElementById('focus-level').value, document.getElementById('focus-target').value);
+}});
+document.getElementById('btn-clear-focus').addEventListener('click', clearFocus);
 
 applyFilters();
 </script>
