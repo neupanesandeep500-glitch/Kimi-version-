@@ -7,6 +7,12 @@ Transmission Line License Status web app.
 KEY FIX: GIS data is now bundled inline via gis_bundled.py — the map works
 immediately on first deploy with zero configuration, no uploads, no Drive syncs.
 Admin uploads still work as overrides if provided.
+
+ASSET AUTO-LOAD: Branding/category images (logo, flag, hero, per-type/
+status/province backgrounds) can be bundled as a single zip on Google
+Drive and auto-restored on every startup via DEFAULT_ASSETS_DRIVE_URL —
+so they survive Render's ephemeral disk on cold starts without needing
+to be re-uploaded through /admin each time.
 """
 
 import os
@@ -14,6 +20,7 @@ import copy
 import json
 import threading
 import traceback
+import zipfile
 
 import data_engine as de
 
@@ -27,6 +34,7 @@ for d in (DATA_DIR, GIS_DIR, ASSETS_DIR):
 WORKBOOK_PATH = os.path.join(DATA_DIR, "workbook.xlsx")
 GIS_ZIP_PATH = os.path.join(GIS_DIR, "hermes_NPL_new_wgs.zip")
 PA_ZIP_PATH = os.path.join(GIS_DIR, "Protected_Area.zip")
+ASSETS_ZIP_PATH = os.path.join(DATA_DIR, "assets_bundle.zip")
 LOGO_PATH_JSON = os.path.join(DATA_DIR, "config.json")
 
 MAX_GIS_ZIP_MB = int(os.environ.get("MAX_GIS_ZIP_MB", "80"))
@@ -157,6 +165,76 @@ def ensure_gis_loaded(force=False):
             STATE["pa_load_error"] = str(exc)
 
 
+# ── ASSET AUTO-LOAD (logo / flag / hero / category backgrounds) ────────────
+
+def ensure_assets_loaded():
+    """Pull a zip of branding/category images from Google Drive (if
+    DEFAULT_ASSETS_DRIVE_URL is set) and extract it into ASSETS_DIR, then
+    register the recognized files into STATE — the same effect as
+    re-uploading each one through /admin, but automatic on every startup.
+    Safe to call even if no zip / no matching files are found; it's a
+    no-op in that case and admin-uploaded images still work as normal.
+    """
+    url = os.environ.get("DEFAULT_ASSETS_DRIVE_URL")
+    if not url:
+        return
+    try:
+        de.download_google_drive_file(url, ASSETS_ZIP_PATH)
+        with zipfile.ZipFile(ASSETS_ZIP_PATH) as zf:
+            zf.extractall(ASSETS_DIR)
+        _register_bundled_assets()
+    except Exception:
+        traceback.print_exc()
+
+
+def _register_bundled_assets():
+    """Scan ASSETS_DIR for files matching the app's naming convention
+    (logo.*, flag.*, hero_background.*, typebg_*, statusbg_*,
+    provincebg_*) and register them in STATE/config, the same way
+    admin.py's upload routes do after a manual upload."""
+    updates = {}
+    img_exts = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg")
+
+    for ext in img_exts:
+        if os.path.exists(os.path.join(ASSETS_DIR, f"logo{ext}")):
+            updates["logo_filename"] = f"logo{ext}"
+            break
+    for ext in img_exts:
+        if os.path.exists(os.path.join(ASSETS_DIR, f"flag{ext}")):
+            updates["flag_filename"] = f"flag{ext}"
+            break
+    for ext in img_exts:
+        if os.path.exists(os.path.join(ASSETS_DIR, f"hero_background{ext}")):
+            updates["background_filename"] = f"hero_background{ext}"
+            break
+
+    type_bg = dict(STATE.get("type_bg") or {})
+    status_bg = dict(STATE.get("status_bg") or {})
+    province_bg = dict(STATE.get("province_bg") or {})
+
+    for fn in os.listdir(ASSETS_DIR):
+        base, ext = os.path.splitext(fn)
+        if ext.lower() not in img_exts:
+            continue
+        if base.startswith("typebg_"):
+            type_bg[base[len("typebg_"):]] = fn
+        elif base.startswith("statusbg_"):
+            status_bg[base[len("statusbg_"):]] = fn
+        elif base.startswith("provincebg_"):
+            province_bg[base[len("provincebg_"):]] = fn
+
+    if type_bg:
+        updates["type_bg"] = type_bg
+    if status_bg:
+        updates["status_bg"] = status_bg
+    if province_bg:
+        updates["province_bg"] = province_bg
+
+    if updates:
+        STATE.update(updates)
+        _save_config(**updates)
+
+
 def _run_async(loading_flag, error_flag, fn):
     def _worker():
         with _gis_lock:
@@ -269,6 +347,14 @@ def start_pa_drive_sync_async(url_or_id):
     _run_async("pa_loading", "pa_load_error", _do)
 
 
+def start_assets_drive_sync_async():
+    """Manual re-sync trigger (e.g. for an admin-panel button) — pulls
+    the assets zip again without waiting for the next process restart."""
+    def _do():
+        ensure_assets_loaded()
+    _run_async("gis_loading", "gis_load_error", _do)
+
+
 def reload_cached_on_startup():
     bootstrap_on_startup()
 
@@ -286,6 +372,13 @@ def bootstrap_on_startup():
 
     # ── GIS FIRST (bundled data guarantees this always works) ──
     ensure_gis_loaded()
+
+    # ── ASSETS NEXT (logo/flag/hero/category backgrounds from Drive,
+    # if DEFAULT_ASSETS_DRIVE_URL is set) — restores branding images
+    # that would otherwise be wiped by Render's ephemeral disk on
+    # every cold start. Runs before the header/first render so the
+    # branding is in place immediately, not just after a re-upload. ──
+    ensure_assets_loaded()
 
     # Try Drive overrides if configured
     if gis_url:
