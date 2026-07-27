@@ -23,7 +23,7 @@ import data_engine as de
 admin_bp = Blueprint("admin", __name__, url_prefix="/admin")
 
 # Simple admin auth — in production, use proper authentication
-ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "Sarthvik@30")
 
 # ── Image upload helpers ─────────────────────────────────────────────────────
 ALLOWED_IMAGE_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}
