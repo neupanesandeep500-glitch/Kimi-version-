@@ -1233,13 +1233,13 @@ def build_ticker_segments(loader, recs=None):
 
     op = [r for r in plants if r["status"] == "Operating"]
 
-    for tlabel, icon, sel in (
+   for tlabel, icon, sel in (
             ("HYDRO", "💧", [r for r in op if str(r["type"]).startswith("Hydro")]),
             ("SOLAR", "☀", [r for r in op if r["type"] == "Solar"])):
         if not sel:
             continue
-       segs.append((_cat_segment(f"{icon} {tlabel} IN OPERATION", len(sel),
-                                  sum(r['capacity_mw'] or 0 for r in sel)), "#a5f3c4"))
+        segs.append((_cat_segment(f"{icon} {tlabel} IN OPERATION", len(sel),
+                                   sum(r['capacity_mw'] or 0 for r in sel)), "#a5f3c4"))
         # Top 5 Provinces / Districts / Local Bodies by installed capacity
         # for this category — resolved from each project's own GIS boundary
         # overlap (province_pct/district_pct/local_pct), not the sheet's
@@ -1250,7 +1250,6 @@ def build_ticker_segments(loader, recs=None):
             txt = _fmt_admin_all(totals, top_n=5)
             if txt:
                 segs.append((f"{icon} {tlabel} {lab}: {txt}", "#7be3a2"))
-
     ty_, tm_, td_ = de.today_bs()
 
     def _cod_key(r):
