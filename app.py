@@ -3406,7 +3406,7 @@ def download_pdf(n_clicks, f_type, f_status, f_province, f_capacity, f_tx_length
             "Length (KM)", "Cumulative Length (KM)",
         )
 
-      fig_num += 1
+       fig_num += 1
         by_volt_cmp = defaultdict(int)
         for r in tx_recs:
             if r["voltage_kv"]:
