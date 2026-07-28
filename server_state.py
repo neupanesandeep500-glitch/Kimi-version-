@@ -62,10 +62,10 @@ COUNTAPI_KEY = os.environ.get("COUNTAPI_KEY", "doed-nepal-powerplants-dashboard-
 
 # One-time seed value used ONLY the very first time the external counter
 # key is created (i.e. it currently has no value at all). This restores
-# your real historical count of 200 as the starting point. Once the key
+# your real historical count of 250 as the starting point. Once the key
 # exists, this is never applied again — every visit after that just
 # increments whatever the external service already has stored.
-VISITOR_COUNT_SEED = int(os.environ.get("VISITOR_COUNT_SEED", "200"))
+VISITOR_COUNT_SEED = int(os.environ.get("VISITOR_COUNT_SEED", "250"))
 
 STATE = {
     "loader": None,
@@ -434,7 +434,7 @@ def bootstrap_on_startup():
         )
 
 
-_REFRESH_INTERVAL_SECONDS = int(os.environ.get("AUTO_REFRESH_HOURS", "6")) * 3600
+_REFRESH_INTERVAL_SECONDS = int(os.environ.get("AUTO_REFRESH_HOURS", "24")) * 3600
 
 
 def start_background_refresh():
