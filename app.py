@@ -3406,7 +3406,7 @@ def download_pdf(n_clicks, f_type, f_status, f_province, f_capacity, f_tx_length
             "Length (KM)", "Cumulative Length (KM)",
         )
 
-        fig_num += 1
+      fig_num += 1
         by_volt_cmp = defaultdict(int)
         for r in tx_recs:
             if r["voltage_kv"]:
@@ -3420,6 +3420,27 @@ def download_pdf(n_clicks, f_type, f_status, f_province, f_capacity, f_tx_length
         )
 
     return dcc.send_file(path)
+
+
+@server.route("/sitemap.xml")
+def serve_sitemap():
+    from flask import Response
+    xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        '  <url><loc>https://www.neupanesandeep.com.np/</loc></url>\n'
+        '</urlset>'
+    )
+    return Response(xml, mimetype="application/xml")
+
+
+@server.route("/robots.txt")
+def serve_robots():
+    from flask import Response
+    return Response(
+        "User-agent: *\nAllow: /\nSitemap: https://www.neupanesandeep.com.np/sitemap.xml",
+        mimetype="text/plain",
+    )
 
 
 if __name__ == "__main__":
