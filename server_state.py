@@ -65,7 +65,7 @@ COUNTAPI_KEY = os.environ.get("COUNTAPI_KEY", "doed-nepal-powerplants-dashboard-
 # your real historical count of 250 as the starting point. Once the key
 # exists, this is never applied again — every visit after that just
 # increments whatever the external service already has stored.
-VISITOR_COUNT_SEED = int(os.environ.get("VISITOR_COUNT_SEED", "250"))
+VISITOR_COUNT_SEED = int(os.environ.get("VISITOR_COUNT_SEED", "305"))
 
 STATE = {
     "loader": None,
