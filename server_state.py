@@ -17,6 +17,14 @@ to be re-uploaded through /admin each time.
 TEMPORARY: ensure_assets_loaded()/_register_bundled_assets() below have
 debug print() statements added to diagnose why images aren't loading.
 Remove these once the issue is found and fixed.
+
+VISITOR COUNTER FIX: local disk (config.json) is wiped on every Render
+redeploy/restart on the free plan — Render's free web services cannot
+attach a Persistent Disk, only paid plans can. So the visitor count is
+now stored on a small free external counting service (no signup) and
+treated as the source of truth; config.json is only an offline-fallback
+cache, never the primary store. This means the count keeps growing
+across every redeploy/restart and is never reset or floored again.
 """
 
 import os
@@ -25,6 +33,8 @@ import json
 import threading
 import traceback
 import zipfile
+import urllib.request
+import urllib.error
 
 import data_engine as de
 
@@ -42,6 +52,20 @@ ASSETS_ZIP_PATH = os.path.join(DATA_DIR, "assets_bundle.zip")
 LOGO_PATH_JSON = os.path.join(DATA_DIR, "config.json")
 
 MAX_GIS_ZIP_MB = int(os.environ.get("MAX_GIS_ZIP_MB", "80"))
+
+# External, free, no-signup counting service used as the durable store
+# for the visitor counter (survives Render redeploys/restarts, unlike
+# local disk on the free plan). COUNTAPI_KEY must be globally unique
+# since this service has no auth — change it if you fork this project.
+COUNTAPI_BASE = os.environ.get("COUNTAPI_BASE", "https://countapi.mileshilliard.com/api/v1")
+COUNTAPI_KEY = os.environ.get("COUNTAPI_KEY", "doed-nepal-powerplants-dashboard-visitors")
+
+# One-time seed value used ONLY the very first time the external counter
+# key is created (i.e. it currently has no value at all). This restores
+# your real historical count of 200 as the starting point. Once the key
+# exists, this is never applied again — every visit after that just
+# increments whatever the external service already has stored.
+VISITOR_COUNT_SEED = int(os.environ.get("VISITOR_COUNT_SEED", "200"))
 
 STATE = {
     "loader": None,
@@ -81,7 +105,7 @@ def _sync_state_from_config():
     STATE["type_bg"] = cfg.get("type_bg", {})
     STATE["province_bg"] = cfg.get("province_bg", {})
     STATE["status_bg"] = cfg.get("status_bg", {})
-    STATE["visitor_count"] = cfg.get("visitor_count", 0)
+    STATE["visitor_count"] = cfg.get("visitor_count", VISITOR_COUNT_SEED)
     return cfg
 
 
@@ -501,15 +525,57 @@ def set_marquee_enabled(enabled):
     _save_config(marquee_enabled=bool(enabled))
 
 
+def _countapi_call(action, value=None, timeout=3):
+    """Call the external counter service. Returns the integer count on
+    success, or None on any failure (network error, timeout, service
+    down) — callers must handle None by falling back to the local
+    cache, never by resetting to 0."""
+    url = f"{COUNTAPI_BASE}/{action}/{COUNTAPI_KEY}"
+    if value is not None:
+        url += f"?value={value}"
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        return int(data.get("value"))
+    except Exception:
+        return None
+
+
 def bump_visitor_count():
-    n = int(STATE.get("visitor_count", 0)) + 1
+    """Increment the durable, external visitor count by 1 and return
+    the new total. Local config.json is updated only as an offline
+    cache — if the external service is briefly unreachable, we fall
+    back to the last known cached value instead of resetting to 0, and
+    the external count (the real source of truth) is untouched, so
+    nothing is lost or double-counted once it's reachable again."""
+    current = _countapi_call("get")
+    if current is None:
+        # Key doesn't exist yet on the external service — seed it with
+        # the real historical count instead of starting from 0.
+        _countapi_call("set", VISITOR_COUNT_SEED)
+
+    n = _countapi_call("hit")
+    if n is not None:
+        STATE["visitor_count"] = n
+        _save_config(visitor_count=n)
+        return n
+
+    # External service unreachable right now — fall back to the local
+    # cache so the counter still moves instead of breaking or resetting.
+    n = int(STATE.get("visitor_count", VISITOR_COUNT_SEED)) + 1
     STATE["visitor_count"] = n
     _save_config(visitor_count=n)
     return n
 
 
 def get_visitor_count():
-    return int(STATE.get("visitor_count", 0))
+    """Read the durable, external visitor count. Falls back to the
+    local cache (never to 0) if the external service is unreachable."""
+    n = _countapi_call("get")
+    if n is not None:
+        STATE["visitor_count"] = n
+        return n
+    return int(STATE.get("visitor_count", VISITOR_COUNT_SEED))
 
 
 def slugify_type(type_name):
