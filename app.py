@@ -310,9 +310,21 @@ setInterval(function() {
 
 
 
+GA_MEASUREMENT_ID = os.environ.get("GA_MEASUREMENT_ID", "G-DD12W6FLZ8")
+
+GA_SNIPPET = f"""<script async src="https://www.googletagmanager.com/gtag/js?id={GA_MEASUREMENT_ID}"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){{dataLayer.push(arguments);}}
+  gtag('js', new Date());
+  gtag('config', '{GA_MEASUREMENT_ID}');
+</script>"""
+
 app.index_string = f"""<!DOCTYPE html>
 <html><head>{{%metas%}}<title>{{%title%}}</title>{{%favicon%}}{{%css%}}
-<style>{TICKER_CSS}</style></head>
+<style>{TICKER_CSS}</style>
+{GA_SNIPPET}
+</head>
 <body>{{%app_entry%}}<footer>{{%config%}}{{%scripts%}}{{%renderer%}}</footer>{CLOCK_JS}</body></html>"""
 
 server.secret_key = os.environ.get("FLASK_SECRET_KEY", os.urandom(32).hex())
