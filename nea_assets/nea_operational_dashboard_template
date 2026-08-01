@@ -1,1 +1,505 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>NEA Operational Data</title>
+<script src="/nea-vendor/chart.umd.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+<style>
+  :root { --nea-blue:#0d47a1; --nea-blue2:#1565c0; --nea-bg:#f4f7fb; --nea-card:#ffffff; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif; background:var(--nea-bg); color:#20293a; }
+  .nea-wrap { padding: 14px 18px 30px; }
+  .nea-badge { display:inline-flex; align-items:center; gap:8px; font-size:12px; font-weight:600;
+    background:#0b1730; color:#9fd8ff; padding:6px 12px; border-radius:20px; margin-bottom:14px; }
+  .nea-kpi-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px; margin-bottom:18px; }
+  .nea-kpi { background:var(--nea-card); border-radius:10px; padding:14px 16px; box-shadow:0 1px 4px rgba(20,30,60,0.08); border-left:4px solid var(--nea-blue2); }
+  .nea-kpi .label { font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:#647085; font-weight:700; }
+  .nea-kpi .value { font-size:22px; font-weight:800; color:#0d1b33; margin-top:2px; }
+  .nea-kpi .delta { font-size:12px; font-weight:700; margin-top:4px; }
+  .delta.up { color:#2e7d32; } .delta.down { color:#c62828; }
+  .nea-section { background:var(--nea-card); border-radius:12px; padding:16px 18px; margin-bottom:18px; box-shadow:0 1px 4px rgba(20,30,60,0.08); }
+  .nea-section h3 { margin:0 0 12px; font-size:15px; font-weight:800; color:var(--nea-blue); display:flex; align-items:center; gap:8px; }
+  .nea-grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+  @media (max-width:900px) { .nea-grid-2 { grid-template-columns:1fr; } }
+  .nea-chart-box { position:relative; height:320px; }
+  .nea-chart-box.tall { height:380px; }
+  select.nea-select { padding:6px 10px; border-radius:6px; border:1px solid #c7d2e2; font-size:13px; margin-left:8px; }
+  .nea-subtabs-nav { display:flex; flex-wrap:wrap; gap:4px; margin-bottom:14px; }
+  .nea-subtab-btn { cursor:pointer; font-weight:600; font-size:13px; color:#37474f;
+    border:1px solid transparent; border-radius:6px; padding:8px 16px; background:#eef1f6;
+    transition: transform 0.12s ease, background 0.15s ease, color 0.15s ease; }
+  .nea-subtab-btn:hover { background:#dbe6f7; color:#0d47a1; transform:translateY(-1px); }
+  .nea-subtab-btn.active { color:#fff; background:linear-gradient(135deg,#00897b 0%,#00695c 100%);
+    box-shadow:0 2px 7px rgba(0,105,92,0.4); }
+  .nea-controls { display:flex; align-items:center; flex-wrap:wrap; gap:6px; margin-bottom:10px; font-size:13px; font-weight:600; color:#37474f; }
+  .nea-footnote { font-size:11px; color:#8592ab; margin-top:8px; }
+  .nea-error { background:#fdecea; color:#a72820; border:1px solid #f5c2be; border-radius:8px; padding:12px 16px; font-size:13px; }
+</style>
+</head>
+<body>
+<div class="nea-wrap">
+  <div id="nea-content">
+
+  <div class="nea-subtabs-nav" id="nea-category-tabs" role="tablist">
+    <button type="button" class="nea-subtab-btn active" data-cat="technical">🔧 Technical Performance</button>
+    <button type="button" class="nea-subtab-btn" data-cat="financial">💰 Financial Performance</button>
+  </div>
+
+  <div class="nea-cat" data-cat="technical">
+  <div class="nea-section">
+    <h3><i class="fas fa-bolt"></i> Annual Energy Availability &amp; Peak Demand</h3>
+    <div class="nea-chart-box tall"><canvas id="chart-annual-energy"></canvas></div>
+  </div>
+
+  <div class="nea-section">
+    <h3><i class="fas fa-plug-circle-bolt"></i> System Loss (%)</h3>
+    <div class="nea-chart-box"><canvas id="chart-system-loss"></canvas></div>
+  </div>
+
+  <div class="nea-grid-2">
+    <div class="nea-section">
+      <h3><i class="fas fa-tower-cell"></i> Transmission Line Length (Ckt. Km)</h3>
+      <div class="nea-chart-box"><canvas id="chart-transmission"></canvas></div>
+    </div>
+    <div class="nea-section">
+      <h3><i class="fas fa-charging-station"></i> Substation Capacity (MVA)</h3>
+      <div class="nea-chart-box"><canvas id="chart-substation"></canvas></div>
+    </div>
+  </div>
+
+  <div class="nea-section">
+    <h3><i class="fas fa-chart-area"></i> Monthly Energy Balance (GWh)</h3>
+    <div class="nea-controls">
+      Fiscal Year: <select class="nea-select" id="eb-fy-select"></select>
+    </div>
+    <div class="nea-chart-box tall"><canvas id="chart-energy-balance"></canvas></div>
+  </div>
+
+  <div class="nea-section">
+    <h3><i class="fas fa-chart-column"></i> Monthly Capacity Balance (MW)</h3>
+    <div class="nea-controls">
+      Fiscal Year: <select class="nea-select" id="cb-fy-select"></select>
+    </div>
+    <div class="nea-chart-box tall"><canvas id="chart-capacity-balance"></canvas></div>
+  </div>
+  </div>
+  <!-- /technical -->
+
+  <div class="nea-cat" data-cat="financial">
+  <div class="nea-grid-2">
+    <div class="nea-section">
+      <h3><i class="fas fa-sack-dollar"></i> Sales Revenue</h3>
+      <div class="nea-chart-box"><canvas id="chart-sales"></canvas></div>
+    </div>
+    <div class="nea-section">
+      <h3><i class="fas fa-scale-balanced"></i> Financial: Revenue vs Profit/Loss</h3>
+      <div class="nea-chart-box"><canvas id="chart-financial"></canvas></div>
+    </div>
+  </div>
+
+  <div class="nea-section">
+    <h3><i class="fas fa-users"></i> Consumers Growth</h3>
+    <div class="nea-chart-box"><canvas id="chart-consumers"></canvas></div>
+  </div>
+
+  <div class="nea-section">
+    <h3><i class="fas fa-hand-holding-dollar"></i> Revenue Collection by Consumer Category</h3>
+    <div class="nea-chart-box"><canvas id="chart-revenue-by-category"></canvas></div>
+  </div>
+
+  <div class="nea-grid-2">
+    <div class="nea-section">
+      <h3><i class="fas fa-right-to-bracket"></i> Energy Import from India (GWh/month)</h3>
+      <div class="nea-controls">FY: <select class="nea-select" id="imp-fy-select"></select></div>
+      <div class="nea-chart-box"><canvas id="chart-import"></canvas></div>
+    </div>
+    <div class="nea-section">
+      <h3><i class="fas fa-right-from-bracket"></i> Energy Export (GWh/month)</h3>
+      <div class="nea-controls">FY: <select class="nea-select" id="exp-fy-select"></select></div>
+      <div class="nea-chart-box"><canvas id="chart-export"></canvas></div>
+    </div>
+  </div>
+  </div>
+  <!-- /financial -->
+
+  </div>
+</div>
+
+<div class="nea-disclaimer" style="max-width:1180px; margin:16px auto 0; padding:14px 18px;
+     background:#fff; border-radius:12px; box-shadow:0 1px 4px rgba(20,30,60,0.08);">
+  <p style="font-size:11.5px; color:#8894a8; margin:0 0 6px;">
+    <strong style="color:#647085;">Disclaimer:</strong>
+    The figures on this page — including peak demand, system loss, energy balance,
+    consumers, revenue, and related operational metrics — are compiled from data
+    published by the Nepal Electricity Authority (<a href="https://www.nea.org.np" target="_blank">www.nea.org.np</a>).
+  </p>
+  <p style="font-size:11.5px; color:#8894a8; margin:0;">
+    This is an independent, unofficial platform intended only to give a general
+    overview of NEA's operational performance; it is not affiliated with or endorsed
+    by NEA. While reasonable care has been taken in processing this data, we do not
+    guarantee its accuracy, completeness, or currency, and accept no liability for
+    errors, omissions, or any decisions made based on it.
+  </p>
+</div>
+
+<script>
+const DATA = __NEA_DATA_JSON__;
+const STYLE = __NEA_STYLE_JSON__;
+const PALETTE = (STYLE.palette && STYLE.palette.length) ? STYLE.palette :
+  ["#4e79a7","#f28e2b","#59a14f","#edc948","#b07aa1","#76b7b2","#e15759","#9c755f","#bab0ac","#ff9da7"];
+const PEAK_SYSTEM_COLOR = "#212121";
+const PEAK_NATIONAL_COLOR = "#d500f9";
+
+// Custom Style tab settings (font/grid/animation) applied globally — the
+// same settings that drive the license charts elsewhere in the app.
+// Per-metric colors (system loss, peak demand, etc.) stay fixed since
+// they're meaningful, named series rather than an arbitrary palette.
+if (typeof Chart !== "undefined") {
+  Chart.defaults.font.family = STYLE.font_family || "Arial";
+  Chart.defaults.font.size = STYLE.label_size || 12;
+  Chart.defaults.animation = STYLE.animation === false ? false : {};
+}
+const GRID_OPT = { display: STYLE.show_grid !== false };
+
+function niceMax(arr, pad=1.25) {
+  const vals = (arr || []).filter(v => v !== null && v !== undefined && !isNaN(v));
+  if (!vals.length) return undefined;
+  const m = Math.max(...vals) * pad;
+  if (m <= 0) return undefined;
+  const pow10 = Math.pow(10, Math.floor(Math.log10(m)));
+  const n = m / pow10;
+  const ceil = n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10;
+  return ceil * pow10;
+}
+
+function fmt(n) {
+  if (n === null || n === undefined || isNaN(n)) return "—";
+  return Number(n).toLocaleString(undefined, {maximumFractionDigits: 2});
+}
+
+function kpiCard(label, value, delta, deltaGood) {
+  const div = document.createElement("div");
+  div.className = "nea-kpi";
+  const deltaHtml = (delta === undefined || delta === null) ? "" :
+    `<div class="delta ${deltaGood ? 'up' : 'down'}">${delta}</div>`;
+  div.innerHTML = `<div class="label">${label}</div><div class="value">${value}</div>${deltaHtml}`;
+  return div;
+}
+
+function lineDataset(label, data, color, fill=false) {
+  return {label, data, borderColor:color, backgroundColor: fill ? color+"33" : color, fill, tension:0.25, borderWidth:2, pointRadius:3};
+}
+function barDataset(label, data, color) {
+  return {label, data, backgroundColor:color};
+}
+
+function renderSystemLoss() {
+  const d = DATA.systemLoss || {};
+  new Chart(document.getElementById("chart-system-loss"), {
+    type: "line",
+    data: { labels: d.years || [], datasets: [
+      lineDataset("Transmission Loss", d.transmission, PALETTE[0]),
+      lineDataset("Distribution Loss", d.distribution, PALETTE[1]),
+      lineDataset("System Loss", d.system, PALETTE[3]),
+    ]},
+    options: { responsive:true, maintainAspectRatio:false, plugins:{legend:{position:"bottom"}} }
+  });
+}
+
+function renderAnnualEnergy() {
+  const d = DATA.annualEnergy || {};
+  new Chart(document.getElementById("chart-annual-energy"), {
+    data: { labels: d.years || [], datasets: [
+      { type:"line", label:"System Peak (MW)", data:d.system_peak, borderColor:PEAK_SYSTEM_COLOR,
+        backgroundColor:PEAK_SYSTEM_COLOR, borderDash:[7,4], yAxisID:"y1", tension:0.25, borderWidth:3,
+        pointRadius:2, pointStyle:"rectRot", order:0 },
+      { type:"line", label:"National Peak (MW)", data:d.national_peak, borderColor:PEAK_NATIONAL_COLOR,
+        backgroundColor:PEAK_NATIONAL_COLOR, yAxisID:"y1", tension:0.25, borderWidth:3,
+        pointRadius:2, pointStyle:"circle", order:0 },
+      { type:"bar", label:"NEA Own", data:d.nea_own, backgroundColor:PALETTE[0], stack:"gen", order:1 },
+      { type:"bar", label:"NEA Subsidiary", data:d.nea_sub, backgroundColor:PALETTE[1], stack:"gen", order:1 },
+      { type:"bar", label:"IPP", data:d.ipp, backgroundColor:PALETTE[2], stack:"gen", order:1 },
+      { type:"bar", label:"India Import", data:d.india, backgroundColor:PALETTE[3], stack:"gen", order:1 },
+    ]},
+    options: { responsive:true, maintainAspectRatio:false,
+      scales: { y:{stacked:true, title:{display:true,text:"MU"}},
+                y1:{position:"right", grid:{drawOnChartArea:false}, title:{display:true,text:"MW (Peak Demand)"}} },
+      plugins:{legend:{position:"bottom"}} }
+  });
+}
+
+function renderConsumers() {
+  const d = DATA.consumers || {};
+  new Chart(document.getElementById("chart-consumers"), {
+    data: { labels: d.years || [], datasets: [
+      { type:"bar", label:"Total Consumers", data:d.total, backgroundColor:PALETTE[0], yAxisID:"y", order:1 },
+      { type:"line", label:"Growth %", data:d.growth_pct, yAxisID:"y1", borderColor:PALETTE[3], tension:0.25, borderWidth:2, pointRadius:3, order:0 },
+    ]},
+    options: { responsive:true, maintainAspectRatio:false,
+      scales: {
+        y:{ position:"left", title:{display:true,text:"Consumers"}, ticks:{ callback:(v)=>fmt(v) } },
+        y1:{ position:"right", grid:{drawOnChartArea:false}, title:{display:true,text:"%"} }
+      },
+      plugins:{legend:{position:"bottom"},
+        tooltip:{ callbacks:{ label:(ctx)=>{
+          const v = ctx.parsed.y;
+          return ctx.dataset.yAxisID === "y1" ? `${ctx.dataset.label}: ${fmt(v)}%` : `${ctx.dataset.label}: ${fmt(v)}`;
+        } } } }
+    }
+  });
+}
+
+function renderSales() {
+  const d = DATA.sales || {};
+  new Chart(document.getElementById("chart-sales"), {
+    data: { labels: d.years || [], datasets: [
+      { type:"bar", label:"Total Gross Revenue (Rs. Mn)", data:d.total, backgroundColor:PALETTE[1], yAxisID:"y", order:1 },
+      { type:"line", label:"Growth %", data:d.growth_pct, yAxisID:"y1", borderColor:"#1565c0", backgroundColor:"#1565c0", tension:0.25, borderWidth:2, pointRadius:3, order:0 },
+    ]},
+    options: { responsive:true, maintainAspectRatio:false,
+      scales: {
+        y:{ position:"left", title:{display:true,text:"Rs. Mn"}, ticks:{ callback:(v)=>fmt(v) } },
+        y1:{ position:"right", grid:{drawOnChartArea:false}, title:{display:true,text:"%"} }
+      },
+      plugins:{legend:{position:"bottom"},
+        tooltip:{ callbacks:{ label:(ctx)=>{
+          const v = ctx.parsed.y;
+          return ctx.dataset.yAxisID === "y1" ? `${ctx.dataset.label}: ${fmt(v)}%` : `${ctx.dataset.label}: ${fmt(v)}`;
+        } } } }
+    }
+  });
+}
+
+function renderRevenueByCategory() {
+  const d = DATA.sales || {};
+  const cats = d.categories || {};
+  const keys = Object.keys(cats);
+  if (!keys.length) return; // sheet has no extra category columns beyond Total/Growth
+  const datasets = keys.map((k, i) => ({
+    type: "bar", label: k, data: cats[k], backgroundColor: PALETTE[i % PALETTE.length], stack: "rev",
+  }));
+  new Chart(document.getElementById("chart-revenue-by-category"), {
+    data: { labels: d.years || [], datasets },
+    options: { responsive:true, maintainAspectRatio:false,
+      scales: {
+        x: { stacked:true },
+        y: { stacked:true, title:{display:true,text:"Rs. Mn"}, ticks:{ callback:(v)=>fmt(v) } }
+      },
+      plugins:{ legend:{position:"bottom"},
+        tooltip:{ callbacks:{ label:(ctx)=>`${ctx.dataset.label}: ${fmt(ctx.parsed.y)}` } } }
+    }
+  });
+}
+
+function renderFinancial() {
+  const d = DATA.financial || {};
+  new Chart(document.getElementById("chart-financial"), {
+    type: "bar",
+    data: { labels: d.years || [], datasets: [
+      barDataset("Revenue (Rs. Mn)", d.revenue, PALETTE[0]),
+      barDataset("Profit / Loss (Rs. Mn)", d.profit_loss, PALETTE[3]),
+    ]},
+    options: { responsive:true, maintainAspectRatio:false, plugins:{legend:{position:"bottom"}} }
+  });
+}
+
+function renderTransmission() {
+  const d = DATA.transmission || {};
+  new Chart(document.getElementById("chart-transmission"), {
+    type: "bar",
+    data: { labels: d.years || [], datasets: [
+      { label:"66 kV", data:d.kv66, backgroundColor:PALETTE[0], stack:"v" },
+      { label:"132 kV", data:d.kv132, backgroundColor:PALETTE[1], stack:"v" },
+      { label:"220 kV", data:d.kv220, backgroundColor:PALETTE[2], stack:"v" },
+      { label:"400 kV", data:d.kv400, backgroundColor:PALETTE[3], stack:"v" },
+    ]},
+    options: { responsive:true, maintainAspectRatio:false,
+      scales:{ x:{stacked:true}, y:{stacked:true, title:{display:true,text:"Ckt. Km"}} },
+      plugins:{legend:{position:"bottom"}} }
+  });
+}
+
+function renderSubstation() {
+  const d = DATA.substation || {};
+  new Chart(document.getElementById("chart-substation"), {
+    data: { labels: d.years || [], datasets: [
+      { type:"bar", label:"Capacity (MVA)", data:d.capacity, backgroundColor:PALETTE[5], order:1 },
+      { type:"line", label:"Increment", data:d.increment, yAxisID:"y1", borderColor:PALETTE[6], tension:0.25, borderWidth:2, order:0 },
+    ]},
+    options: { responsive:true, maintainAspectRatio:false,
+      scales:{ y1:{position:"right", grid:{drawOnChartArea:false}, beginAtZero:true, max:niceMax(d.increment,1.2)} },
+      plugins:{legend:{position:"bottom"}} }
+  });
+}
+
+let ebChart, cbChart, impChart, expChart;
+
+function populateFySelect(selectEl, fyKeys, onChange) {
+  selectEl.innerHTML = "";
+  fyKeys.forEach(fy => {
+    const opt = document.createElement("option");
+    opt.value = fy; opt.textContent = fy;
+    selectEl.appendChild(opt);
+  });
+  if (fyKeys.length) { selectEl.value = fyKeys[fyKeys.length - 1]; }
+  selectEl.addEventListener("change", () => onChange(selectEl.value));
+}
+
+function renderEnergyBalance(fy) {
+  const entry = (DATA.energyBalanceMonthly || {})[fy];
+  if (!entry) return;
+  const negExport = (entry.export || []).map(v => (v === null || v === undefined) ? null : -v);
+  const cfg = {
+    data: { labels: entry.months, datasets: [
+      { type:"line", label:"System Demand", data:entry.system_demand, borderColor:"#e91e63",
+        backgroundColor:"#e91e63", borderWidth:3, tension:0.2, pointRadius:2, order:0 },
+      { type:"bar", label:"IPP", data:entry.ipp, backgroundColor:PALETTE[0], stack:"s", order:1 },
+      { type:"bar", label:"NEA Subsidiary", data:entry.nea_sub, backgroundColor:PALETTE[1], stack:"s", order:1 },
+      { type:"bar", label:"NEA ROR/PROR", data:entry.nea_ror, backgroundColor:PALETTE[2], stack:"s", order:1 },
+      { type:"bar", label:"NEA Storage", data:entry.nea_storage, backgroundColor:PALETTE[4], stack:"s", order:1 },
+      { type:"bar", label:"NEA Solar", data:entry.nea_solar, backgroundColor:PALETTE[6], stack:"s", order:1 },
+      { type:"bar", label:"Thermal", data:entry.thermal, backgroundColor:PALETTE[7], stack:"s", order:1 },
+      { type:"bar", label:"Import", data:entry.import, backgroundColor:PALETTE[3], stack:"s", order:1 },
+      { type:"bar", label:"Export", data:negExport, backgroundColor:PALETTE[5], stack:"s", order:1 },
+    ]},
+    options: { responsive:true, maintainAspectRatio:false,
+      scales:{ x:{stacked:true},
+               y:{stacked:true, title:{display:true,text:"GWh"}} },
+      plugins:{legend:{position:"bottom"}} }
+  };
+  if (ebChart) ebChart.destroy();
+  ebChart = new Chart(document.getElementById("chart-energy-balance"), cfg);
+}
+
+function renderCapacityBalance(fy) {
+  const entry = (DATA.capacityBalanceMonthly || {})[fy];
+  if (!entry) return;
+  const negExport = (entry.export || []).map(v => (v === null || v === undefined) ? null : -v);
+  const cfg = {
+    data: { labels: entry.months, datasets: [
+      { type:"line", label:"System Peak", data:entry.system_peak, borderColor:PEAK_SYSTEM_COLOR,
+        backgroundColor:PEAK_SYSTEM_COLOR, borderDash:[7,4], borderWidth:3, yAxisID:"y", stack:"peak-system",
+        tension:0.2, pointRadius:2, pointStyle:"rectRot", order:0 },
+      { type:"line", label:"National Peak", data:entry.national_peak, borderColor:PEAK_NATIONAL_COLOR,
+        backgroundColor:PEAK_NATIONAL_COLOR, borderWidth:3, yAxisID:"y", stack:"peak-national",
+        tension:0.2, pointRadius:2, pointStyle:"circle", order:0 },
+      { type:"bar", label:"IPP", data:entry.ipp, backgroundColor:PALETTE[0], stack:"s", order:1 },
+      { type:"bar", label:"NEA Subsidiary", data:entry.nea_sub, backgroundColor:PALETTE[1], stack:"s", order:1 },
+      { type:"bar", label:"NEA ROR/PROR", data:entry.nea_ror, backgroundColor:PALETTE[2], stack:"s", order:1 },
+      { type:"bar", label:"NEA Storage", data:entry.nea_storage, backgroundColor:PALETTE[4], stack:"s", order:1 },
+      { type:"bar", label:"Import", data:entry.import, backgroundColor:PALETTE[3], stack:"s", order:1 },
+      { type:"bar", label:"Export", data:negExport, backgroundColor:PALETTE[5], stack:"s", order:1 },
+    ]},
+    options: { responsive:true, maintainAspectRatio:false,
+      scales:{ x:{stacked:true},
+               y:{stacked:true, title:{display:true,text:"MW"}} },
+      plugins:{legend:{position:"bottom"}} }
+  };
+  if (cbChart) cbChart.destroy();
+  cbChart = new Chart(document.getElementById("chart-capacity-balance"), cfg);
+}
+
+function renderMonthlySingle(canvasId, fy, dataMap, months, existingChart) {
+  const vals = dataMap[fy] || [];
+  const cfg = {
+    type:"bar",
+    data: { labels: months.slice(0, vals.length), datasets:[ barDataset("GWh", vals, PALETTE[0]) ] },
+    options: { responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}} }
+  };
+  if (existingChart) existingChart.destroy();
+  return new Chart(document.getElementById(canvasId), cfg);
+}
+
+function safe(label, fn) {
+  try { fn(); } catch (e) {
+    console.error("NEA chart failed: " + label, e);
+  }
+}
+
+function setupCategorySelect() {
+  const nav = document.getElementById("nea-category-tabs");
+  if (!nav) return;
+  const buttons = nav.querySelectorAll(".nea-subtab-btn");
+  const apply = (cat) => {
+    document.querySelectorAll(".nea-cat").forEach(el => {
+      el.style.display = (el.dataset.cat === cat) ? "" : "none";
+    });
+    buttons.forEach(b => b.classList.toggle("active", b.dataset.cat === cat));
+  };
+  buttons.forEach(btn => btn.addEventListener("click", () => apply(btn.dataset.cat)));
+  const initial = nav.querySelector(".nea-subtab-btn.active");
+  apply(initial ? initial.dataset.cat : "technical");
+}
+
+function init() {
+  if (typeof Chart === "undefined") {
+    document.getElementById("nea-content").insertAdjacentHTML("afterbegin",
+      '<div class="nea-error"><i class="fas fa-triangle-exclamation"></i> The charting library did not load, ' +
+      'so charts below cannot render (KPI numbers above are unaffected). Try reloading the page; if this ' +
+      'keeps happening, check that /nea-vendor/chart.umd.min.js is reachable.</div>');
+  }
+  safe("systemLoss", renderSystemLoss);
+  safe("annualEnergy", renderAnnualEnergy);
+  safe("consumers", renderConsumers);
+  safe("sales", renderSales);
+  safe("revenueByCategory", renderRevenueByCategory);
+  safe("financial", renderFinancial);
+  safe("transmission", renderTransmission);
+  safe("substation", renderSubstation);
+
+  const months = DATA.exportMonths || [];
+  const ebKeys = Object.keys(DATA.energyBalanceMonthly || {});
+  const cbKeys = Object.keys(DATA.capacityBalanceMonthly || {});
+  const impKeys = Object.keys(DATA.importData || {});
+  const expKeys = Object.keys(DATA.exportData || {});
+
+  if (ebKeys.length) {
+    safe("energyBalance", () => {
+      populateFySelect(document.getElementById("eb-fy-select"), ebKeys, renderEnergyBalance);
+      renderEnergyBalance(ebKeys[ebKeys.length - 1]);
+    });
+  }
+  if (cbKeys.length) {
+    safe("capacityBalance", () => {
+      populateFySelect(document.getElementById("cb-fy-select"), cbKeys, renderCapacityBalance);
+      renderCapacityBalance(cbKeys[cbKeys.length - 1]);
+    });
+  }
+  if (impKeys.length) {
+    safe("import", () => {
+      populateFySelect(document.getElementById("imp-fy-select"), impKeys, (fy) => {
+        impChart = renderMonthlySingle("chart-import", fy, DATA.importData, months, impChart);
+      });
+      impChart = renderMonthlySingle("chart-import", impKeys[impKeys.length - 1], DATA.importData, months, null);
+    });
+  }
+  if (expKeys.length) {
+    safe("export", () => {
+      populateFySelect(document.getElementById("exp-fy-select"), expKeys, (fy) => {
+        expChart = renderMonthlySingle("chart-export", fy, DATA.exportData, months, expChart);
+      });
+      expChart = renderMonthlySingle("chart-export", expKeys[expKeys.length - 1], DATA.exportData, months, null);
+    });
+  }
+
+  // Apply the Technical/Financial filter LAST, after every chart above
+  // has been created while its container was still visible — Chart.js
+  // sizes a canvas at creation time, so toggling a section to
+  // display:none only after that keeps every chart correctly sized
+  // once the user switches back to it.
+  setupCategorySelect();
+}
+
+if (!DATA || Object.keys(DATA).length === 0) {
+  document.getElementById("nea-content").innerHTML =
+    '<div class="nea-error"><i class="fas fa-triangle-exclamation"></i> No NEA operational data is available ' +
+    'right now. Please check back shortly, or refer to NEA\'s official reports at ' +
+    '<a href="https://www.nea.org.np" target="_blank">www.nea.org.np</a>.</div>';
+} else {
+  init();
+}
+</script>
+</body>
+</html>
 
