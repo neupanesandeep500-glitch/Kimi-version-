@@ -1,1 +1,580 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Forecast Lab</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+<style>
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif; background:#f4f7fb; color:#20293a; }
+  .wrap { padding:16px 18px 40px; max-width:1180px; margin:0 auto; }
+  .panel { background:#fff; border-radius:12px; padding:16px 18px; margin-bottom:16px; box-shadow:0 1px 4px rgba(20,30,60,0.08); }
+  .panel h3 { margin:0 0 12px; font-size:15px; font-weight:800; color:#0d47a1; display:flex; gap:8px; align-items:center; }
+  .panel h4 { margin:0 0 10px; font-size:13px; font-weight:800; color:#37425a; display:flex; gap:8px; align-items:center; }
+  .controls { display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; }
+  .field { display:flex; flex-direction:column; gap:4px; min-width:220px; }
+  .field label { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; color:#647085; }
+  select, input[type=number] { padding:8px 10px; border-radius:6px; border:1px solid #c7d2e2; font-size:13px; }
+  button#run-btn { background:linear-gradient(135deg,#1565c0,#0d47a1); color:#fff; border:none;
+    padding:10px 22px; border-radius:8px; font-weight:700; cursor:pointer; font-size:13px; }
+  button#run-btn:hover { opacity:0.92; }
+  button#run-btn:disabled { opacity:0.5; cursor:not-allowed; }
+  .chart-box { position:relative; height:360px; margin-top:10px; }
+  .chart-box.tall { height:440px; }
+  .error-box { background:#fdecea; color:#a72820; border:1px solid #f5c2be; border-radius:8px; padding:12px 16px; font-size:13px; display:none; margin-bottom:14px; }
+  .loading { font-size:13px; color:#647085; display:none; margin-bottom:10px; }
+  .legend-note { font-size:11.5px; color:#7787a0; margin-top:6px; }
+  .legend-note .swatch { display:inline-block; width:22px; height:3px; border-radius:2px; vertical-align:middle; margin:0 5px 0 12px; }
+  .legend-note .swatch.first { margin-left:0; }
+  .legend-note .band { display:inline-block; width:22px; height:10px; border-radius:2px; vertical-align:middle; margin:0 5px 0 12px; background:rgba(198,40,40,0.15); }
+  .legend-note .hatch { display:inline-block; width:22px; height:10px; border-radius:2px; vertical-align:middle; margin:0 5px 0 12px;
+    background-image:repeating-linear-gradient(45deg,#1565c0 0 2px,rgba(21,101,192,.18) 2px 6px); }
+  .source-note { font-size:11.5px; color:#8894a8; margin-top:8px; display:flex; align-items:center; gap:6px; }
+
+  table.metrics-table { width:100%; border-collapse:collapse; font-size:12.5px; }
+  table.metrics-table th, table.metrics-table td { padding:7px 10px; text-align:right; border-bottom:1px solid #eef1f6; white-space:nowrap; }
+  table.metrics-table th:first-child, table.metrics-table td:first-child { text-align:left; }
+  table.metrics-table th { color:#647085; font-weight:700; font-size:11px; text-transform:uppercase; letter-spacing:.02em; }
+  table.metrics-table tr.scenario-row td { background:#eef6ef; font-weight:700; }
+  table.metrics-table tr.error-row td { background:#fdecea; color:#a72820; font-style:italic; }
+  table.metrics-table td.model-cell { text-align:left; color:#37425a; font-weight:600; max-width:280px; white-space:normal; }
+  .badge { display:inline-block; padding:2px 8px; border-radius:20px; background:#eef3fb; color:#0d47a1; font-size:11px; font-weight:700; }
+  .badge.scenario { background:#e3f2e5; color:#1b5e20; }
+  .component-charts { display:grid; grid-template-columns:repeat(auto-fit, minmax(420px, 1fr)); gap:16px; }
+  .component-charts .panel { margin-bottom:0; }
+  optgroup { font-weight:700; }
+</style>
+<base target="_blank">
+</head>
+<body>
+<div class="wrap">
+  <div class="panel">
+    <h3><i class="fas fa-flask"></i> Forecast Lab</h3>
+    <div class="controls">
+      <div class="field" style="min-width:280px;">
+        <label>Parameter</label>
+        <select id="param-select"></select>
+      </div>
+      <div class="field">
+        <label>Model</label>
+        <select id="model-select"></select>
+      </div>
+      <div class="field" style="min-width:120px;">
+        <label>Periods ahead</label>
+        <input type="number" id="n-ahead" min="1" max="20" value="5">
+      </div>
+      <div class="field" style="min-width:auto;">
+        <button id="run-btn"><i class="fas fa-play"></i> Run Forecast</button>
+      </div>
+    </div>
+    <div class="legend-note" id="legend-single">
+      <span class="swatch first" style="background:#1565c0;"></span>History
+      <span class="swatch" style="background:#c62828;"></span>Forecast (solid line)
+      <span class="band"></span>80% confidence band (shaded area)
+    </div>
+    <div class="legend-note" id="legend-composite" style="display:none;">
+      <span class="swatch first" style="background:#1565c0;"></span>History (solid bars, stacked)
+      <span class="hatch"></span>Forecast (hatched bars, stacked)
+      <span class="swatch" style="background:#20293a;"></span>Reported total (history)
+      <span class="swatch" style="background:#c62828;"></span>Sum of forecasted components
+    </div>
+    <div class="source-note"><i class="fas fa-info-circle"></i> Figures are drawn from NEA's published operational data — nothing on this page is sample/demo data.</div>
+  </div>
+
+  <div class="loading" id="loading-msg"><i class="fas fa-spinner fa-spin"></i> Running forecast…</div>
+  <div class="error-box" id="error-box"></div>
+
+  <div class="panel" id="stats-panel" style="display:none;">
+    <h3><i class="fas fa-chart-bar"></i> Statistical Significance</h3>
+    <div id="stats-table-wrap"></div>
+  </div>
+
+  <div class="panel" id="scenario-panel" style="display:none;">
+    <h4><i class="fas fa-layer-group"></i> <span id="scenario-title">Stacked Scenario</span> <span class="badge scenario" id="scenario-badge"></span></h4>
+    <div class="chart-box tall"><canvas id="scenario-chart"></canvas></div>
+  </div>
+
+  <div class="component-charts" id="component-charts"></div>
+
+  <div class="panel" style="margin-top:6px;">
+    <p style="font-size:11.5px; color:#8894a8; margin:0 0 8px;">
+      <strong style="color:#647085;">Disclaimer:</strong>
+      Figures on this page are compiled from data published by the Nepal Electricity
+      Authority (<a href="https://www.nea.org.np" target="_blank">www.nea.org.np</a>).
+      This is an independent, unofficial platform not affiliated with or endorsed by NEA.
+    </p>
+    <p style="font-size:11.5px; color:#8894a8; margin:0;">
+      Forecasts above are generated by statistical models (Linear Regression, Holt,
+      Moving Average, ARIMA, SARIMA, and a Linear+ARIMA hybrid) applied to that
+      historical data. They are estimates for general planning reference only, not
+      official NEA projections — actual outcomes may differ materially, and we accept
+      no liability for decisions made based on these figures.
+    </p>
+  </div>
+</div>
+
+<script>
+/* =============================================================================
+ *  Forecast Lab — live data edition.
+ *
+ * This page used to generate a seeded-random demo dataset and re-implement
+ * its own forecasting math in JS. It doesn't anymore: every number here
+ * comes from NEA's live operational data via two backend endpoints
+ * (see app.py / NEA.py):
+ *
+ *   GET  /api/nea-forecast-params            -> single-series parameters
+ *   GET  /api/nea-forecast-composite-params  -> stacked / multi-component groups
+ *   POST /api/nea-forecast                   -> {past,pred,CI,fit stats} for one series
+ *   POST /api/nea-forecast-composite         -> the same, but per component of a
+ *                                                stacked group PLUS the summed total
+ *
+ * All model fitting (Linear/Holt/Moving-Average/ARIMA/SARIMA/Hybrid) happens
+ * server-side with statsmodels — this file only renders what the API returns.
+ *
+ * NOTE on the "spike at the history→forecast join": this had two separate
+ * causes, one server-side and one here in the chart config.
+ *   1) DATA: NEA.py's _run_single_model continuity correction anchors each
+ *      candidate forecast's FIRST point to the last real observation
+ *      instead of to the model's internal fitted level, so past_values/
+ *      pred_values (and, for composites, aggregate.pred_values vs. the
+ *      bridge computed below) already join with zero numeric jump.
+ *   2) RENDERING (curve overshoot): even with a zero numeric jump, Chart.js's
+ *      default curved line (tension > 0) fits a cardinal spline through each
+ *      dataset's points, and a spline can overshoot past a point when the
+ *      segment before it is flat (base -> first forecast point, forced
+ *      equal by the correction above) and the segment after it isn't —
+ *      producing a visible bump right at the seam that isn't in the
+ *      underlying data at all. The History/Forecast/Reported-Total/
+ *      Forecast-Total lines below now use tension: 0 (straight segments)
+ *      specifically to remove that rendering artifact.
+ *   3) RENDERING (unintended stack grouping — the actual cause of the
+ *      "2x base year value" spike some users still saw): scales.y.stacked
+ *      = true applies to every dataset on that axis, bar and line alike.
+ *      Chart.js groups datasets into a stack by `dataset.stack`, but when
+ *      it's left unset it silently falls back to grouping by chart type —
+ *      so "Reported Total (history)" and "Forecast Total (sum of
+ *      components)" (both `type: "line"`, neither with a `stack` id) fell
+ *      into the same default group and got summed together at the shared
+ *      seam index, doubling the value right where the two lines met. Every
+ *      line dataset in renderComposite() now gets its own unique `stack`
+ *      id so none of them are ever combined with one another, and the
+ *      seam value itself is now simply the base year total — nothing
+ *      computed or summed — connected straight to the first forecasted
+ *      year.
+ * ============================================================================= */
+
+const STYLE = __NEA_STYLE_JSON__;
+const PALETTE = (STYLE.palette && STYLE.palette.length) ? STYLE.palette :
+  ["#4e79a7","#f28e2b","#59a14f","#edc948","#b07aa1","#76b7b2","#e15759","#9c755f","#bab0ac","#ff9da7"];
+
+// Custom Style tab settings (font/grid/animation) applied globally, the
+// same settings that drive the license charts elsewhere in the app —
+// individual chart configs below don't need to know about STYLE directly.
+if (typeof Chart !== "undefined") {
+  Chart.defaults.font.family = STYLE.font_family || "Arial";
+  Chart.defaults.font.size = STYLE.label_size || 12;
+  Chart.defaults.plugins.title.font = { size: STYLE.title_size || 16, weight: "bold" };
+  Chart.defaults.scales.linear = Chart.defaults.scales.linear || {};
+  Chart.defaults.animation = STYLE.animation === false ? false : {};
+  Chart.defaults.scale = Chart.defaults.scale || {};
+}
+
+let SINGLE_PARAMS = [];
+let COMPOSITE_PARAMS = [];
+let componentChartInstances = [];
+let scenarioChartInstance = null;
+
+/* ---------- small utils ---------- */
+
+function hexToRgba(hex, alpha) {
+  const h = hex.replace("#", "");
+  const r = parseInt(h.substring(0, 2), 16), g = parseInt(h.substring(2, 4), 16), b = parseInt(h.substring(4, 6), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+// Native canvas hatch pattern (no plugin needed) so a "forecast" bar is
+// visually distinct from a "history" bar of the same component even in
+// black-and-white printouts, not just by a lighter shade of the same hue.
+function hatchPattern(hex) {
+  const c = document.createElement("canvas");
+  c.width = 10; c.height = 10;
+  const ctx = c.getContext("2d");
+  ctx.fillStyle = hexToRgba(hex, 0.22);
+  ctx.fillRect(0, 0, 10, 10);
+  ctx.strokeStyle = hexToRgba(hex, 0.9);
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(0, 10); ctx.lineTo(10, 0);
+  ctx.moveTo(-2, 2); ctx.lineTo(2, -2);
+  ctx.moveTo(8, 12); ctx.lineTo(12, 8);
+  ctx.stroke();
+  return ctx.createPattern(c, "repeat");
+}
+
+function round2(x) { return (x === null || x === undefined || Number.isNaN(x)) ? null : Math.round(x * 100) / 100; }
+
+function showError(msg) {
+  const box = document.getElementById("error-box");
+  box.textContent = msg;
+  box.style.display = "block";
+}
+
+function clearComponentCharts() {
+  componentChartInstances.forEach(c => c.destroy());
+  componentChartInstances = [];
+  document.getElementById("component-charts").innerHTML = "";
+}
+
+/* ---------- parameter / model dropdowns ---------- */
+
+function populateParamSelect() {
+  const sel = document.getElementById("param-select");
+  sel.innerHTML = "";
+  const modelLabels = {
+    linear: "Linear Regression", holt: "Holt Exponential Smoothing (trend)",
+    moving: "Moving Average", arima: "ARIMA (auto order, AIC-selected)",
+    hybrid: "Hybrid (Linear + ARIMA ensemble)", sarima: "SARIMA (seasonal, period=12)",
+  };
+  window.MODEL_LABELS = modelLabels;
+
+  if (SINGLE_PARAMS.length) {
+    const og = document.createElement("optgroup");
+    og.label = "Single Parameters";
+    SINGLE_PARAMS.forEach(p => {
+      const opt = document.createElement("option");
+      opt.value = `single:${p.value}`;
+      opt.textContent = `${p.label}  (${p.monthly ? "monthly" : "annual"})`;
+      opt.dataset.monthly = p.monthly ? "1" : "0";
+      opt.dataset.kind = "single";
+      opt.dataset.models = (p.models && p.models.length ? p.models : ["linear"]).join(",");
+      og.appendChild(opt);
+    });
+    sel.appendChild(og);
+  }
+
+  if (COMPOSITE_PARAMS.length) {
+    const og2 = document.createElement("optgroup");
+    og2.label = "Stacked / Multi-Component";
+    COMPOSITE_PARAMS.forEach(p => {
+      const opt = document.createElement("option");
+      opt.value = `composite:${p.value}`;
+      opt.textContent = `${p.label} — stacked  (${p.monthly ? "monthly" : "annual"})`;
+      opt.dataset.monthly = p.monthly ? "1" : "0";
+      opt.dataset.kind = "composite";
+      opt.dataset.models = (p.models && p.models.length ? p.models : ["linear"]).join(",");
+      og2.appendChild(opt);
+    });
+    sel.appendChild(og2);
+  }
+
+  sel.addEventListener("change", updateModelChoices);
+}
+
+function updateModelChoices() {
+  const sel = document.getElementById("param-select");
+  const opt = sel.options[sel.selectedIndex];
+  const modelSelect = document.getElementById("model-select");
+  const prevValue = modelSelect.value;
+
+  // Only the models the backend actually confirmed will run cleanly for
+  // THIS parameter's own history are offered — a short or non-seasonal
+  // series never shows a model (e.g. SARIMA on an 8-point annual series)
+  // that's guaranteed to fail or produce a wild spike.
+  const order = ["linear", "holt", "moving", "arima", "hybrid", "sarima"];
+  const available = opt && opt.dataset.models ? opt.dataset.models.split(",") : ["linear"];
+  const models = order.filter(m => available.includes(m));
+
+  modelSelect.innerHTML = "";
+  models.forEach(val => {
+    const o = document.createElement("option");
+    o.value = val; o.textContent = window.MODEL_LABELS[val] || val;
+    modelSelect.appendChild(o);
+  });
+  if (models.includes(prevValue)) modelSelect.value = prevValue;
+}
+
+/* ---------- stats table ---------- */
+
+function metricsTableRows(rows) {
+  const cols = [["r2", "R²"], ["rmse", "RMSE"], ["mae", "MAE"], ["mape", "MAPE"], ["aic", "AIC"]];
+  let html = '<table class="metrics-table"><thead><tr><th>Series</th><th>Model</th>' +
+    cols.map(c => `<th>${c[1]}</th>`).join("") + "</tr></thead><tbody>";
+  rows.forEach(r => {
+    const rowClass = r.error ? "error-row" : (r.scenario ? "scenario-row" : "");
+    html += `<tr class="${rowClass}"><td>${r.label}</td><td class="model-cell">${r.model || "—"}</td>` +
+      cols.map(c => {
+        const v = r.metrics ? r.metrics[c[0]] : null;
+        return `<td>${v !== undefined && v !== null ? v : "—"}</td>`;
+      }).join("") + "</tr>";
+  });
+  html += "</tbody></table>";
+  return html;
+}
+
+/* ---------- single-series line chart (history + forecast + CI band) ---------- */
+
+function singleSeriesChartConfig(pastLabels, predLabels, pastValues, predValues, lo, hi, label, baseValue) {
+  const allLabels = pastLabels.concat(predLabels);
+  const pastSeries = pastValues.concat(Array(predLabels.length).fill(null));
+  const predSeries = Array(pastLabels.length - 1).fill(null).concat([baseValue]).concat(predValues);
+  const datasets = [
+    { label: "History", data: pastSeries, borderColor: "#1565c0", backgroundColor: "#1565c0", tension: 0, borderWidth: 2, pointRadius: 3 },
+    { label: "Forecast", data: predSeries, borderColor: "#c62828", backgroundColor: "#c62828", tension: 0, borderWidth: 2.5, pointRadius: 3 },
+  ];
+  if (lo && lo.length && hi && hi.length) {
+    const loSeries = Array(pastLabels.length - 1).fill(null).concat([baseValue]).concat(lo);
+    const hiSeries = Array(pastLabels.length - 1).fill(null).concat([baseValue]).concat(hi);
+    datasets.push({ label: "Upper (80% CI)", data: hiSeries, borderColor: "rgba(198,40,40,0)", backgroundColor: "rgba(198,40,40,0.16)", fill: "+1", pointRadius: 0, borderWidth: 0, order: 1 });
+    datasets.push({ label: "Lower (80% CI)", data: loSeries, borderColor: "rgba(198,40,40,0)", backgroundColor: "rgba(198,40,40,0.16)", fill: false, pointRadius: 0, borderWidth: 0, order: 1 });
+  }
+  return {
+    type: "line",
+    data: { labels: allLabels, datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: { legend: { position: "bottom" }, title: { display: true, text: label } },
+      scales: { y: { beginAtZero: false, grid: { display: STYLE.show_grid !== false } },
+                x: { grid: { display: STYLE.show_grid !== false } } },
+    },
+  };
+}
+
+/* ---------- render: single parameter ---------- */
+
+function renderSingle(paramLabel, data) {
+  document.getElementById("stats-table-wrap").innerHTML = metricsTableRows([{
+    label: paramLabel, model: data.meta && data.meta.model, scenario: false,
+    metrics: data.meta || {},
+  }]);
+  document.getElementById("stats-panel").style.display = "block";
+
+  const container = document.getElementById("component-charts");
+  const wrap = document.createElement("div");
+  wrap.className = "panel";
+  wrap.innerHTML = `<h4>${paramLabel}</h4><div class="chart-box"><canvas></canvas></div>`;
+  container.appendChild(wrap);
+  const canvas = wrap.querySelector("canvas");
+  const cfg = singleSeriesChartConfig(data.past_labels, data.pred_labels, data.past_values, data.pred_values, data.pred_lo, data.pred_hi, paramLabel, data.base_value);
+  componentChartInstances.push(new Chart(canvas, cfg));
+}
+
+/* ---------- render: composite / stacked parameter ---------- */
+
+function renderComposite(data) {
+  const pastLabels = data.past_labels, predLabels = data.pred_labels;
+  const nPast = pastLabels.length, nPred = predLabels.length;
+  const allLabels = pastLabels.concat(predLabels);
+
+  // ---- stats table: one row per component, plus the summed total ----
+  const rows = data.components.map(c => ({
+    label: c.label, model: (c.meta && c.meta.model) || null,
+    metrics: c.meta || {}, error: !!(c.meta && c.meta.error),
+  }));
+  rows.push({
+    label: `${data.label} — Total`, model: "Sum of the forecasted components above",
+    metrics: {}, scenario: true,
+  });
+  document.getElementById("stats-table-wrap").innerHTML = metricsTableRows(rows);
+  document.getElementById("stats-panel").style.display = "block";
+
+  // ---- stacked bar chart: every component, history (solid) + forecast (hatched) ----
+  const datasets = [];
+  data.components.forEach((c, i) => {
+    if (!c.pred_values || !c.pred_values.length) return; // this component's model failed — skip it, not the whole chart
+    const color = PALETTE[i % PALETTE.length];
+    const histData = c.past_values.concat(Array(nPred).fill(null));
+    const fcData = Array(nPast).fill(null).concat(c.pred_values);
+    datasets.push({
+      type: "bar", label: c.label, data: histData,
+      backgroundColor: color, stack: "mix", order: 2, borderWidth: 0,
+    });
+    datasets.push({
+      type: "bar", label: `${c.label} (forecast)`, data: fcData,
+      backgroundColor: hatchPattern(color), stack: "mix", order: 2, borderWidth: 0,
+    });
+  });
+
+  // reported total (as actually recorded historically) — lets
+  // you sanity-check the stacked bars against the recorded total
+  //
+  // NOTE on the REAL cause of the seam spike (the "twice base year value"
+  // bump): scales.y.stacked = true (below) applies to every dataset that
+  // shares that y-axis, bar and line alike. Chart.js groups datasets into
+  // stacks by `dataset.stack`, but when `stack` isn't set it silently
+  // falls back to grouping by chart type instead — so any two `type:
+  // "line"` datasets left without an explicit `stack` id land in the same
+  // group by default and get summed together at every shared x-index.
+  // That's what was happening here: "Reported Total (history)" and
+  // "Forecast Total (sum of components)" both had a real value at the
+  // last historical index (one ~= the base-year total, the other the
+  // bridge point, ~= the same total) and Chart.js was adding them, so the
+  // rendered point at the seam was ~2x the base-year value — a spike that
+  // wasn't in the data at all, just an artifact of an unintended shared
+  // stack group. Every line dataset below now gets its own unique `stack`
+  // id so none of them are ever combined with one another.
+  const reported = data.aggregate.reported_past_values || [];
+  if (reported.length) {
+    datasets.push({
+      type: "line", label: "Reported Total (history)", stack: "line-reported-total",
+      data: reported.concat(Array(nPred).fill(null)),
+      borderColor: "#20293a", backgroundColor: "#20293a",
+      borderWidth: 2, pointRadius: 2, tension: 0, order: 0,
+    });
+  }
+
+  // sum of the forecasted components — the actual "final scenario" number,
+  // drawn as its own line on top of the stack rather than just being
+  // implied by the stack height, plus a CI band when every component
+  // produced one (currently: arima/sarima)
+  const aggPred = data.aggregate.pred_values || [];
+  if (aggPred.length) {
+    // The seam point is simply the base year value — nothing added,
+    // nothing summed. aggregate.pred_values[0] is already anchored
+    // server-side to equal this same base value (see _run_single_model's
+    // continuity correction in NEA.py), so the line drawn here is just a
+    // straight connection from the base year value to the first
+    // forecasted year, then on through the rest of the forecast.
+    const bridge = (data.aggregate.base_value != null) ? data.aggregate.base_value : aggPred[0];
+
+    const sumLine = Array(nPast - 1).fill(null).concat([bridge]).concat(aggPred);
+    datasets.push({
+      type: "line", label: "Forecast Total (sum of components)", stack: "line-forecast-total",
+      data: sumLine, borderColor: "#c62828", backgroundColor: "#c62828",
+      borderWidth: 2.5, borderDash: [6, 3], pointRadius: 3, tension: 0, order: 0,
+    });
+    if (data.aggregate.pred_lo && data.aggregate.pred_lo.length && data.aggregate.pred_hi && data.aggregate.pred_hi.length) {
+      const loLine = Array(nPast - 1).fill(null).concat([bridge]).concat(data.aggregate.pred_lo);
+      const hiLine = Array(nPast - 1).fill(null).concat([bridge]).concat(data.aggregate.pred_hi);
+      datasets.push({ type: "line", label: "Upper (80% CI, total)", stack: "line-ci-upper", data: hiLine, borderColor: "rgba(198,40,40,0)", backgroundColor: "rgba(198,40,40,0.14)", fill: "+1", pointRadius: 0, borderWidth: 0, order: 1 });
+      datasets.push({ type: "line", label: "Lower (80% CI, total)", stack: "line-ci-lower", data: loLine, borderColor: "rgba(198,40,40,0)", backgroundColor: "rgba(198,40,40,0.14)", fill: false, pointRadius: 0, borderWidth: 0, order: 1 });
+    }
+  }
+
+  document.getElementById("scenario-title").textContent = data.label;
+  document.getElementById("scenario-badge").textContent = data.unit || "";
+  const cfg = {
+    data: { labels: allLabels, datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: { legend: { position: "bottom" } },
+      scales: {
+        x: { stacked: true, grid: { display: STYLE.show_grid !== false } },
+        y: { stacked: true, title: { display: true, text: data.unit || "" }, grid: { display: STYLE.show_grid !== false } },
+      },
+    },
+  };
+  scenarioChartInstance = new Chart(document.getElementById("scenario-chart"), cfg);
+  document.getElementById("scenario-panel").style.display = "block";
+
+  // ---- individual component detail charts (own model fit, own CI) ----
+  const container = document.getElementById("component-charts");
+  data.components.forEach(c => {
+    if (!c.pred_values || !c.pred_values.length) return;
+    const wrap = document.createElement("div");
+    wrap.className = "panel";
+    wrap.innerHTML = `<h4>${c.label}</h4><div class="chart-box"><canvas></canvas></div>`;
+    container.appendChild(wrap);
+    const canvas = wrap.querySelector("canvas");
+    const baseValue = c.past_values.length ? c.past_values[c.past_values.length - 1] : null;
+    const cfg2 = singleSeriesChartConfig(pastLabels, predLabels, c.past_values, c.pred_values, c.pred_lo, c.pred_hi, c.label, baseValue);
+    componentChartInstances.push(new Chart(canvas, cfg2));
+  });
+}
+
+/* ---------- main run ---------- */
+
+async function runForecast() {
+  const errBox = document.getElementById("error-box");
+  const loading = document.getElementById("loading-msg");
+  const statsPanel = document.getElementById("stats-panel");
+  const scenarioPanel = document.getElementById("scenario-panel");
+  errBox.style.display = "none";
+  statsPanel.style.display = "none";
+  scenarioPanel.style.display = "none";
+  document.getElementById("legend-single").style.display = "none";
+  document.getElementById("legend-composite").style.display = "none";
+  clearComponentCharts();
+  if (scenarioChartInstance) { scenarioChartInstance.destroy(); scenarioChartInstance = null; }
+
+  if (typeof Chart === "undefined") {
+    showError("The charting library did not load, so the forecast can't be drawn. Check your connection and reload.");
+    return;
+  }
+
+  const sel = document.getElementById("param-select");
+  const opt = sel.options[sel.selectedIndex];
+  if (!opt) { showError("No forecastable parameter is available right now. Please check back later."); return; }
+
+  const [kind, key] = opt.value.split(":");
+  const monthly = opt.dataset.monthly === "1";
+  const model = document.getElementById("model-select").value;
+  const nAhead = Math.max(1, Math.min(20, parseInt(document.getElementById("n-ahead").value || "5", 10)));
+  const paramLabel = opt.textContent.replace(/\s*—?\s*stacked\s*/, "").replace(/\s*\((monthly|annual)\)\s*$/, "");
+
+  loading.style.display = "block";
+  document.getElementById("run-btn").disabled = true;
+
+  try {
+    if (kind === "single") {
+      document.getElementById("legend-single").style.display = "block";
+      const res = await fetch("/api/nea-forecast", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ param_key: key, model, n_ahead: nAhead, monthly }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || `Request failed (${res.status})`);
+      renderSingle(paramLabel, data);
+    } else {
+      document.getElementById("legend-composite").style.display = "block";
+      const res = await fetch("/api/nea-forecast-composite", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ composite_key: key, model, n_ahead: nAhead }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || `Request failed (${res.status})`);
+      renderComposite(data);
+    }
+  } catch (e) {
+    console.error(e);
+    showError("Forecast failed: " + e.message);
+  } finally {
+    loading.style.display = "none";
+    document.getElementById("run-btn").disabled = false;
+  }
+}
+
+/* ---------- boot ---------- */
+
+async function boot() {
+  try {
+    const [singleRes, compRes] = await Promise.all([
+      fetch("/api/nea-forecast-params"),
+      fetch("/api/nea-forecast-composite-params"),
+    ]);
+    SINGLE_PARAMS = await singleRes.json();
+    COMPOSITE_PARAMS = await compRes.json();
+  } catch (e) {
+    showError("Could not load the parameter list from the server: " + e.message);
+    return;
+  }
+
+  if (!SINGLE_PARAMS.length && !COMPOSITE_PARAMS.length) {
+    showError("No forecastable parameters are available right now. Please check back later, or refer to NEA's published reports at www.nea.org.np.");
+    return;
+  }
+
+  populateParamSelect();
+  updateModelChoices();
+  document.getElementById("run-btn").addEventListener("click", runForecast);
+  runForecast();
+}
+
+boot();
+</script>
+</body>
+</html>
 
