@@ -20,6 +20,7 @@ from flask import Blueprint, render_template_string, request, redirect, url_for,
 import server_state as ss
 import data_engine as de
 import NEA
+import visitor_counter
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/admin")
 
@@ -372,7 +373,16 @@ power type, license stage, and province.
 <tr><td>Total Records</td><td>{{ state.loader.records|length if state.loader else 0 }}</td></tr>
 <tr><td>Project Types</td><td>{{ state.loader.get_types()|join(", ") if state.loader else "—" }}</td></tr>
 <tr><td>License Stages</td><td>{{ state.loader.get_statuses()|join(", ") if state.loader else "—" }}</td></tr>
-<tr><td>Visitor Count</td><td>{{ state.get("visitor_count", 0) }}</td></tr>
+<tr><td>Visitor Count</td><td>{{ visitor_status.count }}</td></tr>
+<tr><td>Visitor Counter → Google Sheet</td><td>
+{% if visitor_status.boot_error %}
+<span class="badge-no">✘ Not connected — {{ visitor_status.boot_error }}</span>
+{% elif not visitor_status.sheet_id_configured %}
+<span class="badge-no">✘ No sheet ID configured</span>
+{% else %}
+<span class="badge-yes">✔ Connected{% if visitor_status.dirty %} (pending sync){% endif %}</span>
+{% endif %}
+</td></tr>
 </table>
 </div>
 
@@ -408,9 +418,11 @@ def index():
     default_pa = os.environ.get("DEFAULT_PA_DRIVE_URL", "")
     status_names = de.STATUS_ORDER + de.EXTRA_STATUS_ORDER
     nea_status = NEA.sync_status()
+    visitor_status = visitor_counter.status()
     return render_template_string(
         ADMIN_TEMPLATE,
         state=ss.STATE,
+        visitor_status=visitor_status,
         default_sheet_url=default_sheet,
         default_gis_url=default_gis,
         default_pa_url=default_pa,
