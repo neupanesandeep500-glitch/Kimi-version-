@@ -856,7 +856,7 @@ app.layout = dbc.Container(fluid=True, children=[
                 html.Div([
                     html.Div("Nepal Power Plants Dashboard",
                               className="site-header-title"),
-                    html.Div("Source: www.nea.org.np & www.nea.org.np | Live Licensing, Operational Performance tracker and Estimator for Nepal's Power Sector",
+                    html.Div("Source: www.doed.gov.np & www.nea.org.np | Live Licensing, Operational Performance tracker and Estimator for Nepal's Power Sector",
                               className="site-header-subtitle"),
                 ]),
             ], className="d-flex align-items-center")),
