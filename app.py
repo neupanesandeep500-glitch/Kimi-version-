@@ -456,6 +456,33 @@ def nea_operational_dashboard():
         return f"<pre>NEA dashboard failed to render: {e}</pre>", 500
 
 
+# ARIMA/SARIMA/Hybrid fits are the slowest thing this app computes on
+# request (a handful of seconds each, more for composite groups that fit
+# several components). The underlying NEA data only changes when someone
+# syncs a new sheet/workbook, so caching each (endpoint, params) result for
+# a few minutes turns repeat clicks — the same parameter re-run, a second
+# viewer loading the same chart — into an instant hit instead of a fresh
+# multi-second (or timeout-risking) computation.
+_FORECAST_CACHE = {}
+_FORECAST_CACHE_TTL = 300  # seconds
+
+
+def _forecast_cache_get(key):
+    import time
+    hit = _FORECAST_CACHE.get(key)
+    if hit and (time.time() - hit[0]) < _FORECAST_CACHE_TTL:
+        return hit[1]
+    return None
+
+
+def _forecast_cache_set(key, value):
+    import time
+    _FORECAST_CACHE[key] = (time.time(), value)
+    if len(_FORECAST_CACHE) > 200:  # basic size guard, oldest-first trim
+        for k in sorted(_FORECAST_CACHE, key=lambda k: _FORECAST_CACHE[k][0])[:50]:
+            _FORECAST_CACHE.pop(k, None)
+
+
 @server.route("/nea-forecast-lab")
 def nea_forecast_lab_page():
     try:
@@ -480,13 +507,18 @@ def api_nea_forecast():
     from flask import jsonify, request
     try:
         body = request.get_json(force=True) or {}
-        fr = NEA.run_forecast(
-            param_key=body.get("param_key"),
-            model=body.get("model", "linear"),
-            n_ahead=body.get("n_ahead", 5),
-            monthly=bool(body.get("monthly", False)),
-        )
-        return jsonify(NEA.forecast_result_to_dict(fr))
+        param_key = body.get("param_key")
+        model = body.get("model", "linear")
+        n_ahead = body.get("n_ahead", 5)
+        monthly = bool(body.get("monthly", False))
+        cache_key = ("single", param_key, model, n_ahead, monthly)
+        cached = _forecast_cache_get(cache_key)
+        if cached is not None:
+            return jsonify(cached)
+        fr = NEA.run_forecast(param_key=param_key, model=model, n_ahead=n_ahead, monthly=monthly)
+        result = NEA.forecast_result_to_dict(fr)
+        _forecast_cache_set(cache_key, result)
+        return jsonify(result)
     except Exception as e:
         traceback.print_exc()
         return jsonify(error=str(e)), 400
@@ -507,11 +539,15 @@ def api_nea_forecast_composite():
     from flask import jsonify, request
     try:
         body = request.get_json(force=True) or {}
-        result = NEA.run_composite_forecast(
-            composite_key=body.get("composite_key"),
-            model=body.get("model", "linear"),
-            n_ahead=body.get("n_ahead", 5),
-        )
+        composite_key = body.get("composite_key")
+        model = body.get("model", "linear")
+        n_ahead = body.get("n_ahead", 5)
+        cache_key = ("composite", composite_key, model, n_ahead)
+        cached = _forecast_cache_get(cache_key)
+        if cached is not None:
+            return jsonify(cached)
+        result = NEA.run_composite_forecast(composite_key=composite_key, model=model, n_ahead=n_ahead)
+        _forecast_cache_set(cache_key, result)
         return jsonify(result)
     except Exception as e:
         traceback.print_exc()
