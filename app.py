@@ -402,12 +402,26 @@ server.register_blueprint(admin_bp)
 
 # CRITICAL FIX: Bootstrap GIS immediately (bundled data, always works)
 ss.bootstrap_on_startup()
-ss.start_background_refresh()
 
 # NEA Operational Data / Forecast Lab: independent of the power-plant
 # licensing data above — its own Google Sheet, its own background sync.
 NEA.bootstrap()
-NEA.start_background_refresh()
+
+# Auto-refresh toggle: set AUTO_REFRESH_ENABLED=false in the environment to
+# turn OFF all scheduled background re-syncing for both the licensing data
+# and the NEA data. With it off, data only updates via the "Sync Sheet" /
+# "Sync NEA Sheet" buttons in /admin, or on the next app restart/redeploy
+# (the bootstrap load above always runs regardless of this setting — this
+# only controls the recurring timers that would otherwise keep re-fetching
+# on their own afterward). Defaults to "true" (existing behavior) if unset.
+AUTO_REFRESH_ENABLED = os.environ.get("AUTO_REFRESH_ENABLED", "true").strip().lower() not in ("false", "0", "no")
+
+if AUTO_REFRESH_ENABLED:
+    ss.start_background_refresh()
+    NEA.start_background_refresh()
+else:
+    print("[STARTUP] AUTO_REFRESH_ENABLED=false — background data refresh is OFF. "
+          "Data will only update via /admin panel sync buttons or app restart.")
 
 # Visitor counter: own Google Sheet (via a service-account), own
 # background flush — pulls the last-saved count in, then persists new
