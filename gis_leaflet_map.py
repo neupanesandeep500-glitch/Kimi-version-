@@ -157,11 +157,49 @@ def build_gis_map_html(records, status_colors, type_colors, province_colors, hei
   select.sel{{width:100%;padding:6px 8px;background:var(--panel);border:1px solid var(--border);
     border-radius:6px;color:var(--text);font-size:12px;margin-bottom:7px;}}
   ::-webkit-scrollbar{{width:8px;}} ::-webkit-scrollbar-thumb{{background:#2a3a48;border-radius:4px;}}
+
+  #sidebar-toggle{{display:none;}}
+  #sidebar-close{{display:none;}}
+  #sidebar-backdrop{{display:none;}}
+
+  @media (max-width: 768px){{
+    #app{{position:relative;overflow:hidden;}}
+    #sidebar{{
+      position:absolute;top:0;left:0;bottom:0;z-index:1000;
+      width:84%;max-width:320px;min-width:0;
+      transform:translateX(-100%);
+      transition:transform .25s ease;
+      box-shadow:2px 0 14px rgba(0,0,0,.45);
+    }}
+    #sidebar.open{{transform:translateX(0);}}
+    #map{{width:100%;}}
+    #sidebar-toggle{{
+      display:flex;align-items:center;gap:6px;
+      position:absolute;top:10px;left:10px;z-index:900;
+      background:var(--panel);color:var(--text);border:1px solid var(--border);
+      border-radius:6px;padding:7px 12px;font-size:12.5px;font-weight:600;cursor:pointer;
+      box-shadow:0 2px 8px rgba(0,0,0,.35);
+    }}
+    #sidebar-close{{
+      display:inline-flex;align-items:center;justify-content:center;
+      position:absolute;top:9px;right:9px;width:26px;height:26px;
+      background:var(--panel);border:1px solid var(--border);border-radius:6px;
+      color:var(--text);font-size:15px;line-height:1;cursor:pointer;
+    }}
+    #sidebar-backdrop{{
+      display:none;position:absolute;inset:0;z-index:999;
+      background:rgba(0,0,0,.4);
+    }}
+    #sidebar-backdrop.open{{display:block;}}
+  }}
 </style>
 </head>
 <body>
 <div id="app">
+  <button id="sidebar-toggle">☰ Filters</button>
+  <div id="sidebar-backdrop"></div>
   <div id="sidebar">
+    <button id="sidebar-close">✕</button>
     <h1>⚡ Nepal Power Project GIS Map</h1>
     <div class="sub">DoED licensing pipeline · province &amp; protected-area overlay</div>
 
@@ -611,6 +649,28 @@ document.getElementById('btn-focus').addEventListener('click', () => {{
 document.getElementById('btn-clear-focus').addEventListener('click', clearFocus);
 
 applyFilters();
+
+// ---------- mobile sidebar drawer ----------
+const sidebarEl = document.getElementById('sidebar');
+const sidebarBackdrop = document.getElementById('sidebar-backdrop');
+
+function openSidebar(){{
+  sidebarEl.classList.add('open');
+  sidebarBackdrop.classList.add('open');
+}}
+function closeSidebar(){{
+  sidebarEl.classList.remove('open');
+  sidebarBackdrop.classList.remove('open');
+  setTimeout(() => map.invalidateSize(), 260); // after the slide-out transition
+}}
+document.getElementById('sidebar-toggle').addEventListener('click', openSidebar);
+document.getElementById('sidebar-close').addEventListener('click', closeSidebar);
+sidebarBackdrop.addEventListener('click', closeSidebar);
+
+// Keep Leaflet's internal size in sync with the container, e.g. on
+// orientation change or when the iframe itself is resized.
+window.addEventListener('resize', () => map.invalidateSize());
+setTimeout(() => map.invalidateSize(), 300);
 </script>
 </body>
 </html>
