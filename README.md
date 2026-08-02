@@ -359,12 +359,24 @@ Linear+ARIMA Hybrid) happens server-side in `NEA.py` using `statsmodels`;
 1. Push to GitHub.
 2. Create a new **Web Service** on Render, pointed at this repo.
 3. Build command: `pip install -r requirements.txt`
-4. Start command: `gunicorn app:server`
+4. Start command: `gunicorn app:server --timeout 120`
 5. Add environment variables as needed (see the table above — remember
    `NEA_SHEET_URL` is separate from `DEFAULT_SHEET_URL`, and set
    `ADMIN_PASSWORD` / `FLASK_SECRET_KEY` / `GOOGLE_SERVICE_ACCOUNT_JSON`
    explicitly for production).
 6. Render sets `PORT` automatically; no change needed.
+
+> **Why `--timeout 120`:** gunicorn kills and restarts a worker that hasn't
+> responded within its timeout (30s by default). The ARIMA/SARIMA/Hybrid
+> forecast models fit several candidate model specs server-side per
+> request — cheap on a fast machine, but on Render's smaller instance
+> types (or a composite forecast that fits multiple components in one
+> request) that can run past 30s. When the worker is killed mid-request,
+> Render's proxy returns an HTML error page instead of JSON, which is what
+> the Forecast Lab shows as `Unexpected token '<' ... is not valid JSON`.
+> The forecast module already trims the ARIMA/SARIMA candidate grid and
+> caches results for a few minutes to keep this rare, but a longer worker
+> timeout is a cheap safety net on top of that.
 
 ### Docker
 
@@ -374,7 +386,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 COPY . .
-CMD ["gunicorn", "app:server", "--bind", "0.0.0.0:8050"]
+CMD ["gunicorn", "app:server", "--bind", "0.0.0.0:8050", "--timeout", "120"]
 ```
 
 ```bash
