@@ -485,6 +485,28 @@ function renderComposite(data) {
   });
 }
 
+/* ---------- response parsing ---------- */
+
+// A model fit that runs long enough can get killed by the server/gateway
+// before it ever returns JSON — the response body is then an HTML error
+// page (a 502/504 from the platform proxy, or gunicorn's own worker-killed
+// page), and calling res.json() on it throws a cryptic
+// "Unexpected token '<' ... is not valid JSON" error. Checking the
+// content-type first lets us show something the user can actually act on.
+async function parseForecastResponse(res) {
+  const contentType = res.headers.get("content-type") || "";
+  if (!contentType.includes("application/json")) {
+    await res.text(); // drain the body; we don't need the HTML itself
+    if (res.status === 502 || res.status === 504 || res.status === 503) {
+      throw new Error("The server took too long to fit this model and the request timed out. Try a shorter forecast horizon, or a faster model (Linear / Holt / Moving Average).");
+    }
+    throw new Error(`Server returned an unexpected response (status ${res.status}). Please try again in a moment.`);
+  }
+  const data = await res.json();
+  if (!res.ok || data.error) throw new Error(data.error || `Request failed (${res.status})`);
+  return data;
+}
+
 /* ---------- main run ---------- */
 
 async function runForecast() {
@@ -525,8 +547,7 @@ async function runForecast() {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ param_key: key, model, n_ahead: nAhead, monthly }),
       });
-      const data = await res.json();
-      if (!res.ok || data.error) throw new Error(data.error || `Request failed (${res.status})`);
+      const data = await parseForecastResponse(res);
       renderSingle(paramLabel, data);
     } else {
       document.getElementById("legend-composite").style.display = "block";
@@ -534,8 +555,7 @@ async function runForecast() {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ composite_key: key, model, n_ahead: nAhead }),
       });
-      const data = await res.json();
-      if (!res.ok || data.error) throw new Error(data.error || `Request failed (${res.status})`);
+      const data = await parseForecastResponse(res);
       renderComposite(data);
     }
   } catch (e) {
@@ -577,4 +597,3 @@ boot();
 </script>
 </body>
 </html>
-
