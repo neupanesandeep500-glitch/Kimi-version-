@@ -374,14 +374,32 @@ power type, license stage, and province.
 <tr><td>Project Types</td><td>{{ state.loader.get_types()|join(", ") if state.loader else "—" }}</td></tr>
 <tr><td>License Stages</td><td>{{ state.loader.get_statuses()|join(", ") if state.loader else "—" }}</td></tr>
 <tr><td>Visitor Count</td><td>{{ visitor_status.count }}</td></tr>
-<tr><td>Visitor Counter → Google Sheet</td><td>
+<tr><td>Visitor Counter → Google Sheet (read)</td><td>
 {% if visitor_status.boot_error %}
 <span class="badge-no">✘ Not connected — {{ visitor_status.boot_error }}</span>
 {% elif not visitor_status.sheet_id_configured %}
 <span class="badge-no">✘ No sheet ID configured</span>
 {% else %}
-<span class="badge-yes">✔ Connected{% if visitor_status.dirty %} (pending sync){% endif %}</span>
+<span class="badge-yes">✔ Connected</span>
 {% endif %}
+</td></tr>
+<tr><td>Visitor Counter → Google Sheet (write-back)</td><td>
+{% if visitor_status.last_flush_error %}
+<span class="badge-no">✘ Write failed — {{ visitor_status.last_flush_error }}</span><br>
+<span style="font-size:12px;color:#888;">This is usually a sharing-permission issue: the service account needs
+<b>Editor</b> access on the sheet, not just Viewer.</span>
+{% elif visitor_status.last_flush_at %}
+<span class="badge-yes">✔ Last synced {{ visitor_status.last_flush_at }}{% if visitor_status.dirty %} (pending sync){% endif %}</span>
+{% elif visitor_status.dirty %}
+<span class="badge-no">… pending first sync</span>
+{% else %}
+<span class="badge-yes">✔ Up to date</span>
+{% endif %}
+</td></tr>
+<tr><td></td><td>
+<form method="post" action="{{ url_for('admin.sync_visitor_counter') }}" style="display:inline;">
+<button type="submit">Sync Visitor Count Now</button>
+</form>
 </td></tr>
 </table>
 </div>
@@ -455,6 +473,18 @@ def sync_sheet():
         flash("Sheet synced successfully!", "success")
     except Exception as e:
         flash(f"Sync failed: {str(e)}", "error")
+    return redirect(url_for("admin.index"))
+
+
+@admin_bp.route("/sync-visitor-counter", methods=["POST"])
+@admin_required
+def sync_visitor_counter():
+    ok = visitor_counter.flush_now(force=True)
+    if ok:
+        flash("Visitor count synced to Google Sheet.", "success")
+    else:
+        status = visitor_counter.status()
+        flash(f"Visitor count sync failed: {status.get('last_flush_error')}", "error")
     return redirect(url_for("admin.index"))
 
 
