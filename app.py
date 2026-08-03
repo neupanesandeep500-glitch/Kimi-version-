@@ -215,6 +215,9 @@ app = dash.Dash(
     __name__,
     external_stylesheets=[dbc.themes.FLATLY, dbc.icons.BOOTSTRAP],
     title="Nepal Power Plants Dashboard",
+    update_title=None,  # REQ: don't flash "Updating..." in the browser tab
+                        # title every few seconds while callbacks (e.g. the
+                        # flip-card intervals) fire — keep the site name shown.
     suppress_callback_exceptions=True,
     meta_tags=[
         {"name": "viewport", "content": "width=device-width, initial-scale=1"},
@@ -2524,10 +2527,18 @@ def render_single_stage_card(stage, sel_recs, bg_url, base_color, is_transmissio
         "padding": "14px 16px", "flex": "1 1 auto",
     })
 
+    # REQ: only the photo should "flip" (re-animate) on each tick — the
+    # data table beneath it just updates its numbers in place. Confine
+    # the animate class to a wrapper around the photo only; the card
+    # itself keeps its key (so content still refreshes each tick) but
+    # no longer carries the animation, so stat_block doesn't fade too.
+    animated_photo = html.Div(photo_frame, key=f"stage-photo-{stage}",
+                               className="flip-card-animate")
+
     # No fixed height / overflowY scroll on the body — the card grows to
     # fit every row so the full stage summary shows by default.
-    return dbc.Card([photo_frame, stat_block],
-                     key=f"stage-{stage}", className="mb-3 shadow-sm flip-card-animate",
+    return dbc.Card([animated_photo, stat_block],
+                     key=f"stage-{stage}", className="mb-3 shadow-sm",
                      style={"minHeight": "360px", "height": "auto",
                             "display": "flex", "flexDirection": "column"})
 
