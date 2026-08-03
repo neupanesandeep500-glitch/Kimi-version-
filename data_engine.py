@@ -618,7 +618,10 @@ class GISEngine:
         if total_area <= 0:
             return {}
 
-        def _pct_for(items):
+        def _raw_areas(items):
+            """Every item with ANY genuine overlap (no minimum-size cutoff),
+            keyed by name, area summed if the same name appears more than
+            once (e.g. a multi-part district)."""
             out = {}
             for name, polygons, ibbox in items:
                 if ibbox:
@@ -626,12 +629,44 @@ class GISEngine:
                     if ilon_max < xmin or ilon_min > xmax or ilat_max < ymin or ilat_min > ymax:
                         continue  # cheap reject before the exact clip
                 area = self._polygon_area_in_bbox(polygons, xmin, ymin, xmax, ymax)
-                if area <= 0:
+                if area <= 1e-12:  # only drop true floating-point noise, not real slivers
                     continue
-                pct = round(100.0 * area / total_area, 1)
-                if pct > 0.01:
-                    out[name] = out.get(name, 0) + pct
+                out[name] = out.get(name, 0.0) + area
             return out
+
+        def _largest_remainder_pcts(raw_areas):
+            """Round each share to 1 decimal place so the shares sum to
+            EXACTLY 100.0 (Hamilton/largest-remainder apportionment, done
+            in tenths-of-a-percent 'seats' for 1-decimal precision) —
+            independent per-item rounding lets the total drift above or
+            below 100%; this guarantees it never does."""
+            total = sum(raw_areas.values())
+            if total <= 0:
+                return {}
+            names = list(raw_areas.keys())
+            scaled = {n: raw_areas[n] / total * 1000.0 for n in names}
+            floors = {n: math.floor(scaled[n]) for n in names}
+            seats_left = 1000 - int(sum(floors.values()))
+            # hand out the leftover tenths-of-a-percent to whichever items
+            # have the largest fractional remainder, largest first
+            order = sorted(names, key=lambda n: scaled[n] - floors[n], reverse=True)
+            result = dict(floors)
+            for i in range(seats_left):
+                result[order[i % len(order)]] += 1
+            return {n: round(v / 10.0, 1) for n, v in result.items()}
+
+        def _pct_for_partition(items):
+            """Use for categories that fully tile the bbox (province,
+            district, local body) — every overlapping region is shown and
+            the displayed percentages always sum to 100%."""
+            return _largest_remainder_pcts(_raw_areas(items))
+
+        def _pct_for_overlay(items):
+            """Use for overlays that don't necessarily cover the whole
+            bbox (protected areas, claimed area) — percent of the bbox
+            each one covers, independently rounded, every overlap shown."""
+            return {name: round(100.0 * area / total_area, 1)
+                    for name, area in _raw_areas(items).items()}
 
         if self.provinces_loaded:
             province_items = [(n, info["polygons"], info.get("bbox")) for n, info in self.provinces.items()]
@@ -645,11 +680,11 @@ class GISEngine:
                           if getattr(self, "claimed_area_polygons", None) else [])
 
         return {
-            "province_pct": _pct_for(province_items),
-            "district_pct": _pct_for(district_items),
-            "local_pct": _pct_for(local_items),
-            "protected_pct": _pct_for(pa_items),
-            "claimed_pct": _pct_for(claimed_items),
+            "province_pct": _pct_for_partition(province_items),
+            "district_pct": _pct_for_partition(district_items),
+            "local_pct": _pct_for_partition(local_items),
+            "protected_pct": _pct_for_overlay(pa_items),
+            "claimed_pct": _pct_for_overlay(claimed_items),
         }
 
     def point_in_district(self, lon, lat):
