@@ -87,6 +87,8 @@ _count = 0                 # authoritative in-memory value, served on every requ
 _last_synced_count = None  # value we last successfully wrote to the sheet
 _dirty = False              # True if _count has changed since the last successful write
 _boot_error = None
+_last_flush_error = None   # most recent write-back failure (None once a flush succeeds)
+_last_flush_at = None      # timestamp of the most recent SUCCESSFUL write-back
 _client_cache = None
 
 
@@ -193,13 +195,16 @@ def get_count() -> int:
         return _count
 
 
-def flush_now() -> bool:
+def flush_now(force: bool = False) -> bool:
     """Force an immediate write of the current count to the sheet.
     Returns True on success. Safe to call from a shutdown handler or
-    an admin 'sync now' button, in addition to the periodic timer."""
-    global _last_synced_count, _dirty
+    an admin 'sync now' button, in addition to the periodic timer.
+    force=True writes even if nothing changed — useful for an admin
+    'test the write path' button, since a same-value write still
+    surfaces a permissions error if one exists."""
+    global _last_synced_count, _dirty, _last_flush_error, _last_flush_at
     with _lock:
-        if not _dirty:
+        if not _dirty and not force:
             return True  # nothing changed since the last successful write
         current = _count
     try:
@@ -208,11 +213,16 @@ def flush_now() -> bool:
             _last_synced_count = current
             # only clear _dirty if nothing incremented while we were writing
             _dirty = (_count != current)
+            _last_flush_error = None
+            _last_flush_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         return True
     except Exception as exc:
         traceback.print_exc()
+        msg = str(exc)
         print(f"[VISITOR COUNTER] Flush to Google Sheet failed (will retry on next "
-              f"interval, counter keeps counting locally in the meantime): {exc}")
+              f"interval, counter keeps counting locally in the meantime): {msg}")
+        with _lock:
+            _last_flush_error = msg
         return False
 
 
@@ -258,6 +268,8 @@ def status() -> dict:
             "last_synced_count": _last_synced_count,
             "dirty": _dirty,
             "boot_error": _boot_error,
+            "last_flush_error": _last_flush_error,
+            "last_flush_at": _last_flush_at,
             "sheet_id_configured": bool(_SHEET_ID),
         }
 
